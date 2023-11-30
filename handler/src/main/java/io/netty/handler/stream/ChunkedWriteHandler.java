@@ -72,7 +72,7 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
     private static final InternalLogger logger =
         InternalLoggerFactory.getInstance(ChunkedWriteHandler.class);
 
-    private final Queue<PendingWrite> queue = new ArrayDeque<PendingWrite>();
+    private Queue<PendingWrite> queue = null;
     private volatile ChannelHandlerContext ctx;
 
     public ChunkedWriteHandler() {
@@ -84,6 +84,17 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
     @Deprecated
     public ChunkedWriteHandler(int maxPendingWrites) {
         checkPositive(maxPendingWrites, "maxPendingWrites");
+    }
+
+    private Queue<ChunkedWriteHandler.PendingWrite> getAllocatedQueue() {
+        if (queue == null) {
+            queue = new ArrayDeque<PendingWrite>();
+        }
+        return queue;
+    }
+
+    private boolean isQueueNonEmpty() {
+        return queue != null && !queue.isEmpty();
     }
 
     @Override
@@ -123,23 +134,33 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
 
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
-        queue.add(new PendingWrite(msg, promise));
+        if (isQueueNonEmpty() || msg instanceof ChunkedInput) {
+            getAllocatedQueue().add(new PendingWrite(msg, promise));
+        } else {
+            ctx.write(msg);
+        }
     }
 
     @Override
     public void flush(ChannelHandlerContext ctx) throws Exception {
-        doFlush(ctx);
+        if (isQueueNonEmpty()) {
+            doFlush(ctx);
+        } else {
+            ctx.flush();
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        doFlush(ctx);
+        if (isQueueNonEmpty()) {
+            doFlush(ctx);
+        }
         ctx.fireChannelInactive();
     }
 
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
-        if (ctx.channel().isWritable()) {
+        if (isQueueNonEmpty() && ctx.channel().isWritable()) {
             // channel is writable again try to continue flushing
             doFlush(ctx);
         }
