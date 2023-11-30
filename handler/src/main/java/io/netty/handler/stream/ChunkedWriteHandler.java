@@ -286,7 +286,7 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
                 ChannelFuture f = ctx.writeAndFlush(message);
                 if (endOfInput) {
                     if (f.isDone()) {
-                        handleEndOfInputFuture(f, currentWrite);
+                        handleEndOfInputFuture(f, chunks, currentWrite);
                     } else {
                         // Register a listener which will close the input once the write is complete.
                         // This is needed because the Chunk may have some resource bound that can not
@@ -296,19 +296,19 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
                         f.addListener(new ChannelFutureListener() {
                             @Override
                             public void operationComplete(ChannelFuture future) {
-                                handleEndOfInputFuture(future, currentWrite);
+                                handleEndOfInputFuture(future, chunks, currentWrite);
                             }
                         });
                     }
                 } else {
                     final boolean resume = !channel.isWritable();
                     if (f.isDone()) {
-                        handleFuture(f, currentWrite, resume);
+                        handleFuture(f, chunks, currentWrite, resume);
                     } else {
                         f.addListener(new ChannelFutureListener() {
                             @Override
                             public void operationComplete(ChannelFuture future) {
-                                handleFuture(future, currentWrite, resume);
+                                handleFuture(future, chunks, currentWrite, resume);
                             }
                         });
                     }
@@ -331,8 +331,7 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
         }
     }
 
-    private static void handleEndOfInputFuture(ChannelFuture future, PendingWrite currentWrite) {
-        ChunkedInput<?> input = (ChunkedInput<?>) currentWrite.msg;
+    private static void handleEndOfInputFuture(ChannelFuture future, ChunkedInput<?> input, PendingWrite currentWrite) {
         if (!future.isSuccess()) {
             closeInput(input);
             currentWrite.fail(future.cause());
@@ -346,8 +345,7 @@ public class ChunkedWriteHandler extends ChannelDuplexHandler {
         }
     }
 
-    private void handleFuture(ChannelFuture future, PendingWrite currentWrite, boolean resume) {
-        ChunkedInput<?> input = (ChunkedInput<?>) currentWrite.msg;
+    private void handleFuture(ChannelFuture future, ChunkedInput<?> input, PendingWrite currentWrite, boolean resume) {
         if (!future.isSuccess()) {
             closeInput(input);
             currentWrite.fail(future.cause());
