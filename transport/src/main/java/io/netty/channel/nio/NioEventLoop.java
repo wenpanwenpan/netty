@@ -869,6 +869,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     @Override
     protected void wakeup(boolean inEventLoop) {
         if (!inEventLoop && nextWakeupNanos.getAndSet(AWAKE) != AWAKE) {
+            // 将reactor线程从selector上唤醒
             selector.wakeup();
         }
     }

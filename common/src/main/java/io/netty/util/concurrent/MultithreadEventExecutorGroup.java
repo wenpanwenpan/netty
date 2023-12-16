@@ -154,6 +154,7 @@ public abstract class MultithreadEventExecutorGroup extends AbstractEventExecuto
 
     @Override
     public EventExecutor next() {
+        // 通过chooser选取下一个reactor（一般是用轮询选取）
         return chooser.next();
     }
 

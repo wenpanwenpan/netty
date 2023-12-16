@@ -21,6 +21,10 @@ import io.netty.util.concurrent.FutureListener;
 import java.net.ConnectException;
 import java.net.SocketAddress;
 
+/**
+ * 对Channel的操作行为全部定义在ChannelOutboundInvoker接口中。
+ * @author wenpan 2023/12/16 7:38 下午
+ */
 public interface ChannelOutboundInvoker {
 
     /**
@@ -31,6 +35,7 @@ public interface ChannelOutboundInvoker {
      * {@link ChannelOutboundHandler#bind(ChannelHandlerContext, SocketAddress, ChannelPromise)} method
      * called of the next {@link ChannelOutboundHandler} contained in the {@link ChannelPipeline} of the
      * {@link Channel}.
+     * bind方法由子类AbstractChannel实现
      */
     ChannelFuture bind(SocketAddress localAddress);
 

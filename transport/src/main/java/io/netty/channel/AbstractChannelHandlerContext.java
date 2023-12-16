@@ -148,9 +148,11 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     static void invokeChannelRegistered(final AbstractChannelHandlerContext next) {
         EventExecutor executor = next.executor();
+        // 如果当前线程是reactor线程，则直接执行 invokeChannelRegistered 方法，如果不是，则提交到reactor线程的任务队列等待reactor线程执行
         if (executor.inEventLoop()) {
             next.invokeChannelRegistered();
         } else {
+            // 如果当前线程不是reactor线程，则将channel注册成功事件放到reactor任务队列里，等待reactor线程来执行
             executor.execute(new Runnable() {
                 @Override
                 public void run() {
@@ -163,6 +165,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     private void invokeChannelRegistered() {
         if (invokeHandler()) {
             try {
+                // 回调context里的handler的channelRegistered方法
                 ((ChannelInboundHandler) handler()).channelRegistered(this);
             } catch (Throwable t) {
                 invokeExceptionCaught(t);
@@ -212,6 +215,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     static void invokeChannelActive(final AbstractChannelHandlerContext next) {
         EventExecutor executor = next.executor();
+        // 如果当前线程是reactor线程，则直接执行，否则则封装成一个任务提交到reactor线程队列等待reactor线程执行
         if (executor.inEventLoop()) {
             next.invokeChannelActive();
         } else {
@@ -488,8 +492,10 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
         final AbstractChannelHandlerContext next = findContextOutbound(MASK_BIND);
         EventExecutor executor = next.executor();
         if (executor.inEventLoop()) {
+            // 如果当前线程就是reactor线程，则直接执行bind方法
             next.invokeBind(localAddress, promise);
         } else {
+            // 提交到reactor线程队列里等待reactor线程执行
             safeExecute(executor, new Runnable() {
                 @Override
                 public void run() {

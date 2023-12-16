@@ -47,16 +47,18 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
                              implements io.netty.channel.socket.ServerSocketChannel {
 
     private static final ChannelMetadata METADATA = new ChannelMetadata(false, 16);
+    //S electorProvider(用于创建Selector和Selectable Channels)
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(NioServerSocketChannel.class);
 
+    // 创建JDK 原生的 ServerSocketChannel，该方法被构造函数调用
     private static ServerSocketChannel newSocket(SelectorProvider provider) {
         try {
             /**
              *  Use the {@link SelectorProvider} to open {@link SocketChannel} and so remove condition in
              *  {@link SelectorProvider#provider()} which is called by each ServerSocketChannel.open() otherwise.
-             *
+             * 通过 provider 来创建channel （不同的操作系统下 SelectorProvider 不一样）
              *  See <a href="https://github.com/netty/netty/issues/2308">#2308</a>.
              */
             return provider.openServerSocketChannel();
@@ -66,12 +68,14 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
         }
     }
 
+    //ServerSocketChannel相关的配置
     private final ServerSocketChannelConfig config;
 
     /**
      * Create a new instance
      */
     public NioServerSocketChannel() {
+        // 调用 newSocket 来创建 NioServerSocketChannel 对象
         this(newSocket(DEFAULT_SELECTOR_PROVIDER));
     }
 
@@ -79,6 +83,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
      * Create a new instance using the given {@link SelectorProvider}.
      */
     public NioServerSocketChannel(SelectorProvider provider) {
+        // 调用 newSocket 来创建 NioServerSocketChannel 对象
         this(newSocket(provider));
     }
 
@@ -86,7 +91,13 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
      * Create a new instance using the given {@link ServerSocketChannel}.
      */
     public NioServerSocketChannel(ServerSocketChannel channel) {
+        //父类AbstractNioChannel中保存JDK NIO原生 ServerSocketChannel 以及要监听的事件OP_ACCEPT
         super(null, channel, SelectionKey.OP_ACCEPT);
+        //DefaultChannelConfig中设置用于Channel接收数据用的buffer->AdaptiveRecvByteBufAllocator
+        // 创建Channel的配置类NioServerSocketChannelConfig，在配置类中封装了对Channel底层的一些配置行为，
+        // 以及JDK中的ServerSocket。以及创建NioServerSocketChannel接收数据用的Buffer分配器AdaptiveRecvByteBufAllocator。
+        // NioServerSocketChannelConfig没什么重要的东西，这里也不必深究，它就是管理NioServerSocketChannel相关的配置，
+        // 这里唯一需要注意的是这个用于Channel接收数据用的Buffer分配器AdaptiveRecvByteBufAllocator，后面在Netty如何接收连接的时候还会提到。
         config = new NioServerSocketChannelConfig(this, javaChannel().socket());
     }
 
@@ -130,6 +141,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
     @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     @Override
     protected void doBind(SocketAddress localAddress) throws Exception {
+        // jdk 版本大于 java7
         if (PlatformDependent.javaVersion() >= 7) {
             javaChannel().bind(localAddress, config.getBacklog());
         } else {

@@ -55,6 +55,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     private static final InternalLogger logger =
             InternalLoggerFactory.getInstance(SingleThreadEventExecutor.class);
 
+    //定义Reactor线程状态
     private static final int ST_NOT_STARTED = 1;
     private static final int ST_STARTED = 2;
     private static final int ST_SHUTTING_DOWN = 3;
@@ -68,6 +69,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         }
     };
 
+    //Reactor线程状态字段state 原子更新器
     private static final AtomicIntegerFieldUpdater<SingleThreadEventExecutor> STATE_UPDATER =
             AtomicIntegerFieldUpdater.newUpdater(SingleThreadEventExecutor.class, "state");
     private static final AtomicReferenceFieldUpdater<SingleThreadEventExecutor, ThreadProperties> PROPERTIES_UPDATER =
@@ -76,11 +78,13 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
 
     // reactor上的异步任务队列
     private final Queue<Runnable> taskQueue;
-    // reactor线程
+    // reactor线程，该线程是下面executor中的一个线程
     private volatile Thread thread;
     @SuppressWarnings("unused")
     private volatile ThreadProperties threadProperties;
-    // 创建reactor线程的线程池
+    // 创建reactor线程的线程池，这个executor类型是 io.netty.util.concurrent.ThreadPerTaskExecutor，该线程池就是每执行一个任务就创建一个线程
+    // 这个线程池里的其中一个线程也就是上面的 thread，@see io.netty.util.concurrent.SingleThreadEventExecutor.doStartThread
+    // 该executor在构造函数中进行赋值的
     private final Executor executor;
     private volatile boolean interrupted;
 
@@ -92,6 +96,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
 
     private long lastExecutionTime;
 
+    //Reactor线程状态  初始为 未启动状态
     @SuppressWarnings({ "FieldMayBeFinal", "unused" })
     private volatile int state = ST_NOT_STARTED;
 
@@ -353,14 +358,17 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     protected void addTask(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
         if (!offerTask(task)) {
+            // 如果提交到reactor任务队列失败，则采用拒绝策略
             reject(task);
         }
     }
 
     final boolean offerTask(Runnable task) {
+        // 如果reactor线程已经关闭了，则拒绝提交任务
         if (isShutdown()) {
             reject();
         }
+        // 往reactor的任务队列提交任务，reactor线程会定期从这个队列里取任务来执行
         return taskQueue.offer(task);
     }
 
@@ -824,6 +832,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     @Override
     public void execute(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
+        // 调用execute方法
         execute(task, !(task instanceof LazyRunnable) && wakesUpForTask(task));
     }
 
@@ -832,11 +841,20 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         execute(ObjectUtil.checkNotNull(task, "task"), false);
     }
 
+    /**
+     * 执行任务
+     * @param task 任务
+     * @param immediate 是否立即唤醒reactor线程来执行任务
+     * @author wenpan 2023/12/16 5:24 下午
+     */
     private void execute(Runnable task, boolean immediate) {
         boolean inEventLoop = inEventLoop();
+        // 往reactor中的任务队列里添加task
         addTask(task);
+        // 如果当前线程不是reactor线程，则启动reactor线程，这里就是reactor线程启动的地方。如果reactor线程已经启动过了，则这里if就进入不了
         if (!inEventLoop) {
-            // 启动reactor线程
+            //如果当前线程不是Reactor线程，则启动Reactor线程
+            //这里可以看出Reactor线程的启动是通过 向NioEventLoop添加异步任务时启动的
             startThread();
             // 线程关闭了
             if (isShutdown()) {
@@ -944,6 +962,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * @param task to reject.
      */
     protected final void reject(Runnable task) {
+        // 回调拒绝策略
         rejectedExecutionHandler.rejected(task, this);
     }
 
@@ -952,14 +971,18 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     private static final long SCHEDULE_PURGE_INTERVAL = TimeUnit.SECONDS.toNanos(1);
 
     private void startThread() {
+        // reactor线程状态必须为 未开始 才允许启动reactor线程
         if (state == ST_NOT_STARTED) {
+            // 将线程状态从未开始更新为已启动
             if (STATE_UPDATER.compareAndSet(this, ST_NOT_STARTED, ST_STARTED)) {
                 boolean success = false;
                 try {
+                    // 启动reactor线程
                     doStartThread();
                     success = true;
                 } finally {
                     if (!success) {
+                        // 启动失败的话，需要将Reactor线程状态改回ST_NOT_STARTED
                         STATE_UPDATER.compareAndSet(this, ST_STARTED, ST_NOT_STARTED);
                     }
                 }
@@ -988,9 +1011,13 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
 
     private void doStartThread() {
         assert thread == null;
+        // 提交到线程池，该线程池的类型是ThreadPerTaskExecutor，每调用依次execute方法就创建一个线程来执行任务，
+        // 从下面可以看到将创建的线程保存到了thread属性上了，这个thread就是我们常说的reactor线程
+        // 此时Reactor线程已经启动，后面的工作全部都由这个Reactor线程来负责执行了
         executor.execute(new Runnable() {
             @Override
             public void run() {
+                // 可以看到thread就是executor线程池里的一个线程
                 thread = Thread.currentThread();
                 if (interrupted) {
                     thread.interrupt();
@@ -999,6 +1026,9 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
                 boolean success = false;
                 updateLastExecutionTime();
                 try {
+                    //Reactor线程开始启动，具体逻辑可以参考：io.netty.channel.nio.NioEventLoop.run
+                    // Reactor线程的核心工作：轮询所有注册其上的Channel中的IO就绪事件，处理对应Channel上的IO事件，执行异步任务。
+                    // Netty将这些核心工作封装在io.netty.channel.nio.NioEventLoop#run方法中
                     SingleThreadEventExecutor.this.run();
                     success = true;
                 } catch (Throwable t) {

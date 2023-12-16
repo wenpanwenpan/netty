@@ -48,6 +48,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     private static final StackTraceElement[] CANCELLATION_STACK = CANCELLATION_CAUSE_HOLDER.cause.getStackTrace();
 
     private volatile Object result;
+    // reactor线程
     private final EventExecutor executor;
     /**
      * One or more listeners. Can be a {@link GenericFutureListener} or a {@link DefaultFutureListeners}.
@@ -485,6 +486,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         if (executor.inEventLoop()) {
             final InternalThreadLocalMap threadLocals = InternalThreadLocalMap.get();
             final int stackDepth = threadLocals.futureListenerStackDepth();
+            // 如果当前线程是reactor线程，则直接回调listeners
             if (stackDepth < MAX_LISTENER_STACK_DEPTH) {
                 threadLocals.setFutureListenerStackDepth(stackDepth + 1);
                 try {
@@ -496,6 +498,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
             }
         }
 
+        // 如果当前线程不是reactor线程，则将调用listeners的动作提交到reactor线程队列中，最后统一由reactor线程调用
         safeExecute(executor, new Runnable() {
             @Override
             public void run() {
@@ -610,9 +613,12 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
     }
 
     private boolean setValue0(Object objResult) {
+        // 将执行结果设置到 promise上
         if (RESULT_UPDATER.compareAndSet(this, null, objResult) ||
             RESULT_UPDATER.compareAndSet(this, UNCANCELLABLE, objResult)) {
+            // 看看是否有等待者
             if (checkNotifyWaiters()) {
+                // 回调监听者
                 notifyListeners();
             }
             return true;

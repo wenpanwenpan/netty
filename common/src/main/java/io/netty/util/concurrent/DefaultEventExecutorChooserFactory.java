@@ -47,7 +47,9 @@ public final class DefaultEventExecutorChooserFactory implements EventExecutorCh
     }
 
     private static final class PowerOfTwoEventExecutorChooser implements EventExecutorChooser {
+        // 用于选取
         private final AtomicInteger idx = new AtomicInteger();
+        // reactor线程组
         private final EventExecutor[] executors;
 
         PowerOfTwoEventExecutorChooser(EventExecutor[] executors) {
@@ -56,6 +58,7 @@ public final class DefaultEventExecutorChooserFactory implements EventExecutorCh
 
         @Override
         public EventExecutor next() {
+            // 通过位运算的方式来轮询选择reactor
             return executors[idx.getAndIncrement() & executors.length - 1];
         }
     }

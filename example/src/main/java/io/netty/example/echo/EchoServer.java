@@ -30,6 +30,8 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Echoes back any received data from a client.
  */
@@ -64,14 +66,15 @@ public final class EchoServer {
                     .channel(NioServerSocketChannel.class)
                     //设置被MainReactor管理的NioServerSocketChannel的Socket选项
                     .option(ChannelOption.SO_BACKLOG, 100)
-                    // 设置主Reactor中Channel->pipline->handler
+                    // 设置主Reactor中Channel->pipline->handler，可以看到这里只能添加一个handler到pipeline上，如果要添加多个则需要用ChannelInitializer
              .handler(new LoggingHandler(LogLevel.INFO))
-                    // 设置从Reactor中注册channel的pipeline。ChannelInitializer是用于当SocketChannel成功注册到绑定的Reactor上后，
-                    // 用于初始化该SocketChannel的Pipeline。它的 initChannel 方法会在注册成功后执行
+                    // 设置从Reactor中注册channel的pipeline。ChannelInitializer是用于当SocketChannel成功注册到绑定的Reactor（selector）上后，
+                    // 用于初始化该SocketChannel的Pipeline。它的 initChannel 方法会在注册成功后被回调执行，然后在该方法里就会向channel的pipeline上添加多个自定义的handler
                     // ChannelInitializer是一种特殊的ChannelHandler，用于初始化pipeline。适用于向pipeline中添加多个ChannelHandler的场景。
              .childHandler(new ChannelInitializer<SocketChannel>() {
                  @Override
                  public void initChannel(SocketChannel ch) throws Exception {
+                     // 获取channel上的pipeline并向其中添加handler
                      ChannelPipeline p = ch.pipeline();
                      if (sslCtx != null) {
                          p.addLast(sslCtx.newHandler(ch.alloc()));
@@ -81,7 +84,7 @@ public final class EchoServer {
                  }
              });
 
-            // Start the server. 绑定端口启动服务，开始监听accept事件
+            // Start the server. 绑定端口启动服务，开始监听accept事件，上面的步骤都是在赋值，具体的启动流程源码要从这里作为入口进行阅读
             ChannelFuture f = b.bind(PORT).sync();
 
             // Wait until the server socket is closed.

@@ -78,6 +78,7 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     @Override
     public EventLoop next() {
+        // 选择一个reactor
         return (EventLoop) super.next();
     }
 
@@ -86,6 +87,7 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     @Override
     public ChannelFuture register(Channel channel) {
+        // 按策略选取出一个reactor，然后将channel注册到上面，@see SingleThreadEventLoop
         return next().register(channel);
     }
 

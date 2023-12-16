@@ -100,14 +100,15 @@ public abstract class SingleThreadEventLoop extends SingleThreadEventExecutor im
 
     @Override
     public ChannelFuture register(Channel channel) {
-        //注册channel到绑定的Reactor上
+        // 将channel和eventLoop包装成DefaultChannelPromise对象，注册channel到绑定的Reactor上，这里传入的是 DefaultChannelPromise
         return register(new DefaultChannelPromise(channel, this));
     }
 
     @Override
     public ChannelFuture register(final ChannelPromise promise) {
         ObjectUtil.checkNotNull(promise, "promise");
-        //注册channel到绑定的Reactor上
+        //unsafe负责channel底层的各种操作
+        // 获取到channel上的unsafe对象，然后利用unsafe对象将channel注册到Reactor上
         promise.channel().unsafe().register(this, promise);
         return promise;
     }

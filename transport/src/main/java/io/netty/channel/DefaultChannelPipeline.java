@@ -64,6 +64,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
     final AbstractChannelHandlerContext head;
     final AbstractChannelHandlerContext tail;
 
+    // 这个pipeline所属的channel
     private final Channel channel;
     private final ChannelFuture succeededFuture;
     private final VoidChannelPromise voidPromise;
@@ -606,6 +607,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     private void callHandlerAdded0(final AbstractChannelHandlerContext ctx) {
         try {
+            // 调用 ChannelHandlerContext（也就是：ChannelInitializer） 的 handlerAdded 方法
             ctx.callHandlerAdded();
         } catch (Throwable t) {
             boolean removed = false;
@@ -642,7 +644,9 @@ public class DefaultChannelPipeline implements ChannelPipeline {
     }
 
     final void invokeHandlerAddedIfNeeded() {
+        // reactor中的线程必须 == 当前线程
         assert channel.eventLoop().inEventLoop();
+        // 第一次注册
         if (firstRegistration) {
             firstRegistration = false;
             // We are now registered to the EventLoop. It's time to call the callbacks for the ChannelHandlers,
@@ -810,6 +814,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         return buf.toString();
     }
 
+    // 发布channel注册到reactor上成功事件
     @Override
     public final ChannelPipeline fireChannelRegistered() {
         AbstractChannelHandlerContext.invokeChannelRegistered(head);
@@ -892,6 +897,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     @Override
     public final ChannelPipeline fireChannelActive() {
+        // channelActive事件在Netty中定义为inbound事件，所以它在pipeline中的传播为正向传播，从HeadContext一直到TailContext为止
         AbstractChannelHandlerContext.invokeChannelActive(head);
         return this;
     }
@@ -970,6 +976,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
     @Override
     public final ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise) {
+        // bind事件被定义为outbound，从尾节点开始传播
         return tail.bind(localAddress, promise);
     }
 
@@ -1111,6 +1118,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         // holding the lock and so produce a deadlock if handlerAdded(...) will try to add another handler from outside
         // the EventLoop.
         PendingHandlerCallback task = pendingHandlerCallbackHead;
+        // 调用 ChannelInitializer 的handleAdd方法向channel的pipeline上添加handler
         while (task != null) {
             task.execute();
             task = task.next;
@@ -1331,6 +1339,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         @Override
         public void bind(
                 ChannelHandlerContext ctx, SocketAddress localAddress, ChannelPromise promise) {
+            //触发AbstractChannel->bind方法 执行JDK NIO SelectableChannel 执行底层绑定操作
             unsafe.bind(localAddress, promise);
         }
 
@@ -1359,6 +1368,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
         @Override
         public void read(ChannelHandlerContext ctx) {
+            // 调用unsafe的read
             unsafe.beginRead();
         }
 
@@ -1395,8 +1405,9 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
         @Override
         public void channelActive(ChannelHandlerContext ctx) {
+            // pipeline中继续向后传播channelActive事件
             ctx.fireChannelActive();
-
+            //如果是autoRead 则自动触发read事件传播，在read回调函数中 触发OP_ACCEPT注册
             readIfIsAutoRead();
         }
 
@@ -1418,7 +1429,9 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         }
 
         private void readIfIsAutoRead() {
+            //如果是autoRead 则触发read事件传播
             if (channel.config().isAutoRead()) {
+                // 在channel的pipeline上传播read事件
                 channel.read();
             }
         }

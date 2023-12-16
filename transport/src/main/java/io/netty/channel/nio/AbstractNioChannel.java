@@ -50,8 +50,11 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     private static final InternalLogger logger =
             InternalLoggerFactory.getInstance(AbstractNioChannel.class);
 
+    // JDK NIO 原生的channel
     private final SelectableChannel ch;
+    // Channel监听事件集合，比如： NioServerSocketChannel里是SelectionKey.OP_ACCEPT事件
     protected final int readInterestOp;
+    //channel注册到Selector后获得的SelectKey
     volatile SelectionKey selectionKey;
     boolean readPending;
     private final Runnable clearReadPendingRunnable = new Runnable() {
@@ -78,9 +81,12 @@ public abstract class AbstractNioChannel extends AbstractChannel {
      */
     protected AbstractNioChannel(Channel parent, SelectableChannel ch, int readInterestOp) {
         super(parent);
+        // 将JDK原生的channel保存到ch属性上
         this.ch = ch;
+        // 设置channel感兴趣的事件，比如：对于NioServerSocketChannel来说感兴趣的IO事件为OP_ACCEPT事件
         this.readInterestOp = readInterestOp;
         try {
+            //设置Channel为非阻塞 配合IO多路复用模型
             ch.configureBlocking(false);
         } catch (IOException e) {
             try {
@@ -377,6 +383,11 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         boolean selected = false;
         for (;;) {
             try {
+                // register 参数1：要将channel注册到哪个selector上，
+                // 参数2：表示Channel上感兴趣的IO事件，当对应的IO事件就绪时，Selector会返回Channel对应的SelectionKey
+                // 参数3： 向SelectionKey中添加用户自定义的附加对象（通过SelectableChannel#register方法将Netty自定义的NioServerSocketChannel（这里的this指针）
+                // 附着在SelectionKey的attechment属性上，完成Netty自定义Channel与JDK NIO Channel的关系绑定。这样在每次对Selector进行IO就绪事件轮询时，
+                // Netty 都可以从 JDK NIO Selector返回的SelectionKey中获取到自定义的Channel对象（这里指的就是NioServerSocketChannel））
                 selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this);
                 return;
             } catch (CancelledKeyException e) {
@@ -409,8 +420,12 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
         readPending = true;
 
+        /**
+         * 1：ServerSocketChannel 初始化时 readInterestOp设置的是OP_ACCEPT事件
+         * */
         final int interestOps = selectionKey.interestOps();
         if ((interestOps & readInterestOp) == 0) {
+            //添加OP_ACCEPT事件到interestOps集合中，这里可以看到使用位运算或来表示将某个感兴趣的事件添加到集合中，细节的性能优化真是分毫必争啊
             selectionKey.interestOps(interestOps | readInterestOp);
         }
     }

@@ -56,6 +56,8 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     @SuppressWarnings("unchecked")
     static final Map.Entry<AttributeKey<?>, Object>[] EMPTY_ATTRIBUTE_ARRAY = new Map.Entry[0];
 
+    // 主reactor线程组，从reactor线程组在子类ServerBootstrap中，netty使用了继承关系来表达主从reactor线程组，
+    // 主reactor线程组放在父类的group属性，子reactor的线程组放在子类的childGroup
     volatile EventLoopGroup group;
     //用于创建ServerSocketChannel  ReflectiveChannelFactory
     @SuppressWarnings("deprecation")
@@ -128,7 +130,8 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         if (this.channelFactory != null) {
             throw new IllegalStateException("channelFactory set already");
         }
-
+        // 可以看到这里将传入的创建channel的工厂对象保存到了channelFactory属性上，
+        // 那么什么时候会通过该工厂类来创建具体的channel对象呢？在netty启动过程中调用 io.netty.bootstrap.AbstractBootstrap.initAndRegister 方法时
         this.channelFactory = channelFactory;
         return self();
     }
@@ -184,6 +187,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             if (value == null) {
                 options.remove(option);
             } else {
+                // 可以看到直接将添加的socket相关属性放在了map里，用到的时候就会从这个map里取
                 options.put(option, value);
             }
         }
@@ -251,6 +255,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * Create a new {@link Channel} and bind it.
      */
     public ChannelFuture bind(int inetPort) {
+        // 创建一个新的 NioServerSocketChannel 并绑定端口
         return bind(new InetSocketAddress(inetPort));
     }
 
@@ -272,25 +277,34 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * Create a new {@link Channel} and bind it.
      */
     public ChannelFuture bind(SocketAddress localAddress) {
+        //校验Netty核心组件是否配置齐全
         validate();
+        //服务端开始启动，绑定端口地址，接收客户端连接
         return doBind(ObjectUtil.checkNotNull(localAddress, "localAddress"));
     }
 
     private ChannelFuture doBind(final SocketAddress localAddress) {
+        // 1、异步创建，初始化，注册ServerSocketChannel到main reactor上，可以看到这里返回的是一个 ChannelFuture，说明这是个异步操作
+        // 那么异步体现在哪里呢？@see io.netty.channel.AbstractChannel.AbstractUnsafe.register 里可以看到是提交到线程池进行绑定的
         final ChannelFuture regFuture = initAndRegister();
         final Channel channel = regFuture.channel();
         if (regFuture.cause() != null) {
             return regFuture;
         }
 
+        // 可以看到一定是先channel注册到reactor完成，然后再进行端口绑定动作
+        // 2、如果channel向reactor注册完成，则进行绑定端口操作（这里的isDone判断不会阻塞）
         if (regFuture.isDone()) {
             // At this point we know that the registration was complete and successful.
             ChannelPromise promise = channel.newPromise();
+            // 2.1 同步调用bind操作
             doBind0(regFuture, channel, localAddress, promise);
             return promise;
         } else {
             // Registration future is almost always fulfilled already, but just in case it's not.
             final PendingRegistrationPromise promise = new PendingRegistrationPromise(channel);
+            // 3、如果此时注册操作没有完成，则向regFuture添加operationComplete回调函数，注册成功后回调。
+            // @see io.netty.channel.AbstractChannel.AbstractUnsafe.register0 中的第三步
             regFuture.addListener(new ChannelFutureListener() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
@@ -303,7 +317,11 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
                         // Registration was successful, so set the correct executor to use.
                         // See https://github.com/netty/netty/issues/2586
                         promise.registered();
-
+                        // 3.1 注册完成后，Reactor线程回调这里
+                        // 可以看到，这里doBind0是个异步调用（将绑定操作提交到reactor线程队列），为什么分明是reactor线程回调的这个方法，
+                        // 这里却又要添加到reactor线程队列呢？为啥不同步调用？因为在 AbstractUnsafe.register0 的第三步该listener被回调
+                        // 但是 register0方法此时还未执行完成，这里提交到线程队列是为了让reactor线程继续执行register0方法，register0方法
+                        // 执行完毕后reactor线程再从任务队列里取出doBind0方法进行调用
                         doBind0(regFuture, channel, localAddress, promise);
                     }
                 }
@@ -315,7 +333,14 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     final ChannelFuture initAndRegister() {
         Channel channel = null;
         try {
+            // 1、创建 NioServerSocketChannel
+            // 这里可以看到在使用channel工厂创建channel了（NioServerSocketChannel）
+            //ReflectiveChannelFactory通过泛型，反射，工厂的方式灵活创建不同类型的channel
+            // 以 NioServerSocketChannel 为例，在这里创建好了channel，channel里的pipeline以及channel相关配置也创建好了，
+            // 以及channel感兴趣的事件，channel的ID，channel关联的原生的JDK NIO的serverSocketChannel，可以点进去细读
             channel = channelFactory.newChannel();
+            // 2、初始化NioServerSocketChannel
+            // 主要是往channel上添加一些配置属性，以及向channel的pipeline上添加一个handler初始化器 ： ChannelInitializer
             init(channel);
         } catch (Throwable t) {
             if (channel != null) {
@@ -328,6 +353,9 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             return new DefaultChannelPromise(new FailedChannel(), GlobalEventExecutor.INSTANCE).setFailure(t);
         }
 
+        // 3、向 MainReactor 注册ServerSocketChannel（准确的说是向MainReactor里的selector上注册）
+        // config().group() 表示获取主reactor线程组，然后调用他的register方法将channel注册到主reactor上的selector上，@see io.netty.channel.MultithreadEventLoopGroup.register(io.netty.channel.Channel)
+        // 由于这里是NioServerSocketChannle向Main Reactor进行注册绑定，所以Main Reactor主要负责处理的IO事件是OP_ACCEPT事件
         ChannelFuture regFuture = config().group().register(channel);
         if (regFuture.cause() != null) {
             if (channel.isRegistered()) {
@@ -349,6 +377,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         return regFuture;
     }
 
+    // 初始化channel
     abstract void init(Channel channel) throws Exception;
 
     private static void doBind0(
@@ -357,9 +386,11 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
 
         // This method is invoked before channelRegistered() is triggered.  Give user handlers a chance to set up
         // the pipeline in its channelRegistered() implementation.
+        // 保存绑定端口的task到reactor线程队列
         channel.eventLoop().execute(new Runnable() {
             @Override
             public void run() {
+                // 如果channel向reactor注册成功时才进行端口绑定，否则绑定失败
                 if (regFuture.isSuccess()) {
                     channel.bind(localAddress, promise).addListener(ChannelFutureListener.CLOSE_ON_FAILURE);
                 } else {
@@ -445,9 +476,18 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
     }
 
+    /**
+     *  为channel上设置配置属性
+     * @param channel channel
+     * @param options 我们在bootstrap中为channel指定的一些属性
+     * @param logger logger
+     * @author wenpan 2023/12/16 3:21 下午
+     */
     static void setChannelOptions(
             Channel channel, Map.Entry<ChannelOption<?>, Object>[] options, InternalLogger logger) {
+        // 遍历每一个属性
         for (Map.Entry<ChannelOption<?>, Object> e: options) {
+            // 每一个属性设置到channel的config里
             setChannelOption(channel, e.getKey(), e.getValue(), logger);
         }
     }
@@ -456,6 +496,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     private static void setChannelOption(
             Channel channel, ChannelOption<?> option, Object value, InternalLogger logger) {
         try {
+            // 每一个属性都设置到channel的config里（还记的NioServerSocketChannel创建的时候一并创建的那个config吗？）
             if (!channel.config().setOption((ChannelOption<Object>) option, value)) {
                 logger.warn("Unknown channel option '{}' for channel '{}'", option, channel);
             }

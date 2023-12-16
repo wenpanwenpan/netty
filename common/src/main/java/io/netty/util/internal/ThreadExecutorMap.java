@@ -51,6 +51,7 @@ public final class ThreadExecutorMap {
     public static Executor apply(final Executor executor, final EventExecutor eventExecutor) {
         ObjectUtil.checkNotNull(executor, "executor");
         ObjectUtil.checkNotNull(eventExecutor, "eventExecutor");
+        // 可以看到这里创建了一个匿名 Executor 对象，该对象包装了传入的 executor 对象，将execute都委托给了传入的 Executor
         return new Executor() {
             // 当调用execute方法的时候，这里可以看到直接调用了 executor 的execute方法，在该方法中会直接创建一个线程来执行任务
             @Override

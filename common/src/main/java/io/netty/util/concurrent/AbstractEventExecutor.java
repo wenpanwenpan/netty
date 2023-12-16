@@ -58,6 +58,7 @@ public abstract class AbstractEventExecutor extends AbstractExecutorService impl
         return this;
     }
 
+    /**如果当前线程 == reactor线程，则任务inEventLoop*/
     @Override
     public boolean inEventLoop() {
         return inEventLoop(Thread.currentThread());

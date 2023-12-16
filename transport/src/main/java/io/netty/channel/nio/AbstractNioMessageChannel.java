@@ -31,6 +31,7 @@ import java.util.List;
 
 /**
  * {@link AbstractNioChannel} base class for {@link Channel}s that operate on messages.
+ * AbstractNioMessageChannel类主要是对NioServerSocketChannel底层读写行为的封装和定义，比如accept接收客户端连接
  */
 public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
     boolean inputShutdown;
@@ -44,6 +45,7 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
     @Override
     protected AbstractNioUnsafe newUnsafe() {
+        // 这里创建的是 NioMessageUnsafe
         return new NioMessageUnsafe();
     }
 
