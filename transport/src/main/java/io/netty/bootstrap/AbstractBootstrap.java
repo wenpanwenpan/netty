@@ -57,14 +57,17 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     static final Map.Entry<AttributeKey<?>, Object>[] EMPTY_ATTRIBUTE_ARRAY = new Map.Entry[0];
 
     volatile EventLoopGroup group;
+    //用于创建ServerSocketChannel  ReflectiveChannelFactory
     @SuppressWarnings("deprecation")
     private volatile ChannelFactory<? extends C> channelFactory;
     private volatile SocketAddress localAddress;
 
     // The order in which ChannelOptions are applied is important they may depend on each other for validation
     // purposes.
+    // serverSocketChannel中的ChannelOption配置
     private final Map<ChannelOption<?>, Object> options = new LinkedHashMap<ChannelOption<?>, Object>();
     private final Map<AttributeKey<?>, Object> attrs = new ConcurrentHashMap<AttributeKey<?>, Object>();
+    // serverSocketChannel中pipeline里的handler(主要是acceptor)
     private volatile ChannelHandler handler;
 
     AbstractBootstrap() {
@@ -104,8 +107,13 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * The {@link Class} which is used to create {@link Channel} instances from.
      * You either use this or {@link #channelFactory(io.netty.channel.ChannelFactory)} if your
      * {@link Channel} implementation has no no-args constructor.
+     * 在向ServerBootstrap配置服务端ServerSocketChannel的channel方法中，其实是创建了一个ChannelFactory
+     * 工厂实例ReflectiveChannelFactory,在Netty服务端启动的过程中，会通过这个ChannelFactory去创建相应的Channel实例。
      */
     public B channel(Class<? extends C> channelClass) {
+        // 可以看到创建的是 ReflectiveChannelFactory 实例，在Netty服务端启动的过程中，会通过这个ChannelFactory去创建相应的Channel实例。
+        // 这里是通过工厂类进行创建的channel实例，所以只需要传入不同的channel Class实现，则可以创建不同的channel，比如：NioServerSocketChannel
+        // OioServerSocketChannel、AioServerSocketChannel
         return channelFactory(new ReflectiveChannelFactory<C>(
                 ObjectUtil.checkNotNull(channelClass, "channelClass")
         ));

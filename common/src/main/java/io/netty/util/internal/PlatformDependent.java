@@ -963,6 +963,8 @@ public final class PlatformDependent {
      * @return A MPSC queue which may be unbounded.
      */
     public static <T> Queue<T> newMpscQueue() {
+        // Reactor内的异步任务队列的类型为MpscQueue,它是由JCTools提供的一个高性能无锁队列，从命名前缀Mpsc可以看出，
+        // 它适用于多生产者单消费者的场景，它支持多个生产者线程安全的访问队列，同一时刻只允许一个消费者线程读取队列中的元素
         return Mpsc.newMpscQueue();
     }
 

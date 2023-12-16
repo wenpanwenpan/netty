@@ -33,6 +33,7 @@ import java.util.concurrent.ThreadFactory;
 
 /**
  * {@link MultithreadEventLoopGroup} implementations which is used for NIO {@link Selector} based {@link Channel}s.
+ * NioEventLoopGroup 表示reactor架构中的reactor组 ， NioEventLoop 表示一个reactor
  */
 public class NioEventLoopGroup extends MultithreadEventLoopGroup {
 
@@ -41,6 +42,7 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
      * the {@link SelectorProvider} which is returned by {@link SelectorProvider#provider()}.
      */
     public NioEventLoopGroup() {
+        // 不指定reactor线程的个数的话就用0表示
         this(0);
     }
 
@@ -49,6 +51,7 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
      * {@link SelectorProvider} which is returned by {@link SelectorProvider#provider()}.
      */
     public NioEventLoopGroup(int nThreads) {
+        // 指定要创建多少个reactor线程
         this(nThreads, (Executor) null);
     }
 
@@ -69,6 +72,8 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
     }
 
     public NioEventLoopGroup(int nThreads, Executor executor) {
+        // SelectorProvider会根据操作系统的不同选择JDK在不同操作系统版本下的对应Selector的实现。
+        // Linux下会选择Epoll，Mac下会选择Kqueue，可点进去看源码
         this(nThreads, executor, SelectorProvider.provider());
     }
 
@@ -91,8 +96,19 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
         this(nThreads, executor, selectorProvider, DefaultSelectStrategyFactory.INSTANCE);
     }
 
+    /**
+     * 构造函数，重点理解下这里的几个参数
+     * @param nThreads 要创建的reactor线程数量
+     * @param executor 负责启动（创建）Reactor线程进而Reactor才可以开始工作（Reactor线程组 NioEventLoopGroup 负责创建Reactor线程，在创建的时候会将executor传入）
+     * @param selectorProvider Reactor中的IO模型为IO多路复用模型，对应于JDK NIO中的实现为java.nio.channels.Selector（对底层epoll、poll、select的封装），
+     *                         每个Reactor中都包含一个Selector，用于轮询注册在该Reactor上的所有Channel上的IO事件。SelectorProvider就是用来创建Selector的
+     * @param selectStrategyFactory Reactor最重要的事情就是轮询注册其上的Channel上的IO就绪事件，这里的SelectStrategyFactory用于指定轮询策略，默认为DefaultSelectStrategyFactory.INSTANCE
+     *                              RejectedExecutionHandlers.reject() 表示当向 NioEventLoop（reactor） 中添加异步任务时，如果队列满了的拒绝策略
+     * @author wenpan 2023/12/10 1:23 下午
+     */
     public NioEventLoopGroup(int nThreads, Executor executor, final SelectorProvider selectorProvider,
                              final SelectStrategyFactory selectStrategyFactory) {
+        // RejectedExecutionHandlers: 当向Reactor添加异步任务添加失败时，采用的拒绝策略。Reactor的任务不只是监听IO活跃事件和IO任务的处理，还包括对异步任务的处理。
         super(nThreads, executor, selectorProvider, selectStrategyFactory, RejectedExecutionHandlers.reject());
     }
 
@@ -139,8 +155,15 @@ public class NioEventLoopGroup extends MultithreadEventLoopGroup {
         }
     }
 
+    /**
+     * Reactor线程组NioEventLoopGroup包含多个Reactor(EventLoop),
+     * 存放于private final EventExecutor[] children数组中。就是通过该方法创建的
+     */
     @Override
     protected EventLoop newChild(Executor executor, Object... args) throws Exception {
+        // Netty中的Reactor主要工作是轮询注册其上的所有Channel上的IO就绪事件，处理IO就绪事件。除了这些主要的工作外，
+        // Netty为了极致的压榨Reactor的性能，还会让它做一些异步任务的执行工作。既然要执行异步任务，那么Reactor中就需要一个队列来保存任务。
+        // 这里的 EventLoopTaskQueueFactory 就是用来创建这样的一个队列来保存Reactor中待执行的异步任务
         EventLoopTaskQueueFactory queueFactory = args.length == 4 ? (EventLoopTaskQueueFactory) args[3] : null;
         return new NioEventLoop(this, executor, (SelectorProvider) args[0],
             ((SelectStrategyFactory) args[1]).newSelectStrategy(), (RejectedExecutionHandler) args[2], queueFactory);

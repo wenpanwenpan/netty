@@ -49,15 +49,26 @@ public final class EchoServer {
         }
 
         // Configure the server.
+        // 创建主从reactor线程组
         EventLoopGroup bossGroup = new NioEventLoopGroup(1);
         EventLoopGroup workerGroup = new NioEventLoopGroup();
         final EchoServerHandler serverHandler = new EchoServerHandler();
         try {
             ServerBootstrap b = new ServerBootstrap();
+            //配置主从Reactor
             b.group(bossGroup, workerGroup)
-             .channel(NioServerSocketChannel.class)
-             .option(ChannelOption.SO_BACKLOG, 100)
+                    // 配置主Reactor的channel类型，用于绑定端口地址以及创建客户端SocketChannel，这里的channel可以近似的理解为socket
+                    // Netty中的NioServerSocketChannel.class就是对JDK NIO中ServerSocketChannel的封装。
+                    // 而用于表示客户端连接的NioSocketChannel是对JDK NIO SocketChannel封装。
+                    // 注意这时只是配置阶段，NioServerSocketChannel此时并未被创建。它是在启动的时候才会被创建出来。
+                    .channel(NioServerSocketChannel.class)
+                    //设置被MainReactor管理的NioServerSocketChannel的Socket选项
+                    .option(ChannelOption.SO_BACKLOG, 100)
+                    // 设置主Reactor中Channel->pipline->handler
              .handler(new LoggingHandler(LogLevel.INFO))
+                    // 设置从Reactor中注册channel的pipeline。ChannelInitializer是用于当SocketChannel成功注册到绑定的Reactor上后，
+                    // 用于初始化该SocketChannel的Pipeline。它的 initChannel 方法会在注册成功后执行
+                    // ChannelInitializer是一种特殊的ChannelHandler，用于初始化pipeline。适用于向pipeline中添加多个ChannelHandler的场景。
              .childHandler(new ChannelInitializer<SocketChannel>() {
                  @Override
                  public void initChannel(SocketChannel ch) throws Exception {
@@ -70,13 +81,13 @@ public final class EchoServer {
                  }
              });
 
-            // Start the server.
+            // Start the server. 绑定端口启动服务，开始监听accept事件
             ChannelFuture f = b.bind(PORT).sync();
 
             // Wait until the server socket is closed.
             f.channel().closeFuture().sync();
         } finally {
-            // Shut down all event loops to terminate all threads.
+            // Shut down all event loops to terminate all threads. 优雅关闭主从Reactor线程组里的所有Reactor线程
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }

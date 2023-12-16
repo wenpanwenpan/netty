@@ -20,7 +20,8 @@ import io.netty.util.concurrent.EventExecutorGroup;
 /**
  * Special {@link EventExecutorGroup} which allows registering {@link Channel}s that get
  * processed for later selection during the event loop.
- *
+ * Netty中的Reactor是以Group的形式出现的，EventLoopGroup正是Reactor组的接口定义，负责管理Reactor，
+ * Netty中的Channel就是通过EventLoopGroup注册到具体的Reactor上的。
  */
 public interface EventLoopGroup extends EventExecutorGroup {
     /**

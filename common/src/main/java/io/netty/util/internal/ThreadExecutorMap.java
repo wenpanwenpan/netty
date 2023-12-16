@@ -52,6 +52,7 @@ public final class ThreadExecutorMap {
         ObjectUtil.checkNotNull(executor, "executor");
         ObjectUtil.checkNotNull(eventExecutor, "eventExecutor");
         return new Executor() {
+            // 当调用execute方法的时候，这里可以看到直接调用了 executor 的execute方法，在该方法中会直接创建一个线程来执行任务
             @Override
             public void execute(final Runnable command) {
                 executor.execute(apply(command, eventExecutor));

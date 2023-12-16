@@ -22,6 +22,8 @@ import io.netty.util.concurrent.OrderedEventExecutor;
  *
  * One {@link EventLoop} instance will usually handle more than one {@link Channel} but this may depend on
  * implementation details and internals.
+ * EventLoop就是Netty中的Reactor，可以说它就是Netty的引擎，负责Channel上IO就绪事件的监听，IO就绪事件的处理，异步任务的执行驱动着整个Netty的运转。
+ * 不同IO模型下，EventLoop有着不同的实现，我们只需要切换不同的实现类就可以完成对NettyIO模型的切换
  *
  */
 public interface EventLoop extends OrderedEventExecutor, EventLoopGroup {

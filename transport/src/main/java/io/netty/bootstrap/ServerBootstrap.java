@@ -40,14 +40,17 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * {@link Bootstrap} sub-class which allows easy bootstrap of {@link ServerChannel}
- *
+ * ServerBootstrap主要负责对主从Reactor线程组相关的配置进行管理，其中带child前缀的配置方法是对从Reactor线程组的相关配置管理。
+ * 从Reactor线程组中的Sub Reactor负责管理的客户端NioSocketChannel相关配置存储在ServerBootstrap结构中。
+ * 父类AbstractBootstrap则是主要负责对主Reactor线程组相关的配置进行管理，以及主Reactor线程组中的Main Reactor负责处理的服务端ServerSocketChannel相关的配置管理。
  */
 public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerChannel> {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(ServerBootstrap.class);
 
     // The order in which child ChannelOptions are applied is important they may depend on each other for validation
-    // purposes.
+    // purposes. 由于客户端NioSocketChannel是由从Reactor线程组中的Sub Reactor来负责处理，所以涉及到客户端NioSocketChannel所有的方法和配置全部是以child前缀开头
+    // 客户端SocketChannel对应的ChannelOption配置
     private final Map<ChannelOption<?>, Object> childOptions = new LinkedHashMap<ChannelOption<?>, Object>();
     private final Map<AttributeKey<?>, Object> childAttrs = new ConcurrentHashMap<AttributeKey<?>, Object>();
     private final ServerBootstrapConfig config = new ServerBootstrapConfig(this);
@@ -175,6 +178,10 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         return this;
     }
 
+    /**
+     * 用于处理NioServerSocketChannel上的accept
+     * @author wenpan 2023/12/10 3:51 下午
+     */
     private static class ServerBootstrapAcceptor extends ChannelInboundHandlerAdapter {
 
         private final EventLoopGroup childGroup;

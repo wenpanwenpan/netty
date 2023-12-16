@@ -74,11 +74,13 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
             AtomicReferenceFieldUpdater.newUpdater(
                     SingleThreadEventExecutor.class, ThreadProperties.class, "threadProperties");
 
+    // reactor上的异步任务队列
     private final Queue<Runnable> taskQueue;
-
+    // reactor线程
     private volatile Thread thread;
     @SuppressWarnings("unused")
     private volatile ThreadProperties threadProperties;
+    // 创建reactor线程的线程池
     private final Executor executor;
     private volatile boolean interrupted;
 
@@ -164,11 +166,18 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     protected SingleThreadEventExecutor(EventExecutorGroup parent, Executor executor,
                                         boolean addTaskWakesUp, Queue<Runnable> taskQueue,
                                         RejectedExecutionHandler rejectedHandler) {
+        // parent为Reactor所属的NioEventLoopGroup Reactor线程组
         super(parent);
+        // 向Reactor添加任务时，是否唤醒Selector停止轮询IO就绪事件，马上执行异步任务
         this.addTaskWakesUp = addTaskWakesUp;
+        // 任务队列长度
         this.maxPendingTasks = DEFAULT_MAX_PENDING_EXECUTOR_TASKS;
+        // 用于启动Reactor线程的executor -> ThreadPerTaskExecutor（注意这里的execute和参数里传递的executor，这是两个不同的东西
+        // 参数里传递的是线程池，这里的executor更像是一个线程任务（reactor线程））
         this.executor = ThreadExecutorMap.apply(executor, this);
+        // 异步任务队列
         this.taskQueue = ObjectUtil.checkNotNull(taskQueue, "taskQueue");
+        // 队列满时的拒绝策略
         this.rejectedExecutionHandler = ObjectUtil.checkNotNull(rejectedHandler, "rejectedHandler");
     }
 
@@ -827,10 +836,13 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         boolean inEventLoop = inEventLoop();
         addTask(task);
         if (!inEventLoop) {
+            // 启动reactor线程
             startThread();
+            // 线程关闭了
             if (isShutdown()) {
                 boolean reject = false;
                 try {
+                    // 移除task
                     if (removeTask(task)) {
                         reject = true;
                     }
@@ -958,6 +970,7 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     private boolean ensureThreadStarted(int oldState) {
         if (oldState == ST_NOT_STARTED) {
             try {
+                // 启动reactor线程
                 doStartThread();
             } catch (Throwable cause) {
                 STATE_UPDATER.set(this, ST_TERMINATED);

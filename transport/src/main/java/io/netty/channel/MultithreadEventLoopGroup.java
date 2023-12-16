@@ -34,9 +34,11 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(MultithreadEventLoopGroup.class);
 
+    // 默认Reactor个数，从下面的静态块可以看出他的取值逻辑
     private static final int DEFAULT_EVENT_LOOP_THREADS;
 
     static {
+        // 可以通过系统变量 -D io.netty.eventLoopThreads"指定。如果不指定，那么默认的就是NettyRuntime.availableProcessors() * 2
         DEFAULT_EVENT_LOOP_THREADS = Math.max(1, SystemPropertyUtil.getInt(
                 "io.netty.eventLoopThreads", NettyRuntime.availableProcessors() * 2));
 
@@ -49,6 +51,7 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
      * @see MultithreadEventExecutorGroup#MultithreadEventExecutorGroup(int, Executor, Object...)
      */
     protected MultithreadEventLoopGroup(int nThreads, Executor executor, Object... args) {
+        // 当nThread参数设置为0采用默认设置时，Reactor线程组内的Reactor个数则设置为DEFAULT_EVENT_LOOP_THREADS
         super(nThreads == 0 ? DEFAULT_EVENT_LOOP_THREADS : nThreads, executor, args);
     }
 

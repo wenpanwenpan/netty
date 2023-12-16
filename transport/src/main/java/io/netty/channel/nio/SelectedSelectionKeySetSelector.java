@@ -21,8 +21,14 @@ import java.nio.channels.Selector;
 import java.nio.channels.spi.SelectorProvider;
 import java.util.Set;
 
+/**
+ * 这是一个装饰器类，将被netty优化过的selector进行装饰，在内部可以看到其实都是委托给被装饰的对象在执行
+ * @author wenpan 2023/12/10 2:36 下午
+ */
 final class SelectedSelectionKeySetSelector extends Selector {
+    // Netty优化后的selector中的 SelectedKey 就绪集合（也就是 delegate 中的  selectedKeys 和 publicSelectedKeys ））
     private final SelectedSelectionKeySet selectionKeys;
+    // 被netty优化后的 Selector
     private final Selector delegate;
 
     SelectedSelectionKeySetSelector(Selector delegate, SelectedSelectionKeySet selectionKeys) {
@@ -52,19 +58,26 @@ final class SelectedSelectionKeySetSelector extends Selector {
 
     @Override
     public int selectNow() throws IOException {
+        // 清空selector中io就绪的channel，为什么要先清空上一次的轮询结果再select呢？
+        // 因为保证应用层原来的selector中已经没有就绪的channel了，然后调用select系统调用，从内核获取io就绪的socket
         selectionKeys.reset();
+        // 返回selector中io就绪的channel（这里会加锁）
         return delegate.selectNow();
     }
 
     @Override
     public int select(long timeout) throws IOException {
+        // 清空selector中io就绪的channel
         selectionKeys.reset();
+        // 返回selector中io就绪的channel（这里会加锁）
         return delegate.select(timeout);
     }
 
     @Override
     public int select() throws IOException {
+        // 清空selector中io就绪的channel
         selectionKeys.reset();
+        // 返回selector中io就绪的channel（这里会加锁）
         return delegate.select();
     }
 
