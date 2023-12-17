@@ -58,6 +58,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
     private volatile SocketAddress localAddress;
     private volatile SocketAddress remoteAddress;
+    // 该channel绑定的reactor
     private volatile EventLoop eventLoop;
     private volatile boolean registered;
     private boolean closeInitiated;
@@ -504,6 +505,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 // reactor线程是什么时候启动的呢？ Reactor线程的启动是在向Reactor提交第一个异步任务的时候启动的。
                 // 用户程序Main线程向Main Reactor提交用于注册NioServerSocketChannel的异步任务时(也就是这里)开始启动
                 try {
+                    // 【第一次向reactor线程队列里提交任务时才开始启动reactor线程的创建和执行】
                     //@see io.netty.util.concurrent.SingleThreadEventExecutor.execute(java.lang.Runnable)
                     eventLoop.execute(new Runnable() {
                         @Override

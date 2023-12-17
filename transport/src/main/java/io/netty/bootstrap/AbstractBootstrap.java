@@ -216,6 +216,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         if (group == null) {
             throw new IllegalStateException("group not set");
         }
+        // 创建channel的工厂不能为空
         if (channelFactory == null) {
             throw new IllegalStateException("channel or channelFactory not set");
         }
@@ -297,7 +298,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         if (regFuture.isDone()) {
             // At this point we know that the registration was complete and successful.
             ChannelPromise promise = channel.newPromise();
-            // 2.1 同步调用bind操作
+            // 2.1 同步调用bind方法绑定端口操作
             doBind0(regFuture, channel, localAddress, promise);
             return promise;
         } else {
@@ -339,7 +340,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             // 以 NioServerSocketChannel 为例，在这里创建好了channel，channel里的pipeline以及channel相关配置也创建好了，
             // 以及channel感兴趣的事件，channel的ID，channel关联的原生的JDK NIO的serverSocketChannel，可以点进去细读
             channel = channelFactory.newChannel();
-            // 2、初始化NioServerSocketChannel
+            // 2、初始化 NioServerSocketChannel
             // 主要是往channel上添加一些配置属性，以及向channel的pipeline上添加一个handler初始化器 ： ChannelInitializer
             init(channel);
         } catch (Throwable t) {
@@ -354,7 +355,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         }
 
         // 3、向 MainReactor 注册ServerSocketChannel（准确的说是向MainReactor里的selector上注册）
-        // config().group() 表示获取主reactor线程组，然后调用他的register方法将channel注册到主reactor上的selector上，@see io.netty.channel.MultithreadEventLoopGroup.register(io.netty.channel.Channel)
+        // config().group() 表示获取reactor线程组，然后调用他的register方法将channel注册到主reactor上的selector上，@see io.netty.channel.MultithreadEventLoopGroup.register(io.netty.channel.Channel)
         // 由于这里是NioServerSocketChannle向Main Reactor进行注册绑定，所以Main Reactor主要负责处理的IO事件是OP_ACCEPT事件
         ChannelFuture regFuture = config().group().register(channel);
         if (regFuture.cause() != null) {

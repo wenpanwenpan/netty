@@ -61,6 +61,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
              * 通过 provider 来创建channel （不同的操作系统下 SelectorProvider 不一样）
              *  See <a href="https://github.com/netty/netty/issues/2308">#2308</a>.
              */
+            // JDK 的 SelectorProvider 创建channel，这里返回JDK NIO 原生的 channel
             return provider.openServerSocketChannel();
         } catch (IOException e) {
             throw new ChannelException(
@@ -208,6 +209,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
         throw new UnsupportedOperationException();
     }
 
+    // NioServerSocketChannel 的配置类，用于存放 NioServerSocketChannel 的一些配置信息
     private final class NioServerSocketChannelConfig extends DefaultServerSocketChannelConfig {
         private NioServerSocketChannelConfig(NioServerSocketChannel channel, ServerSocket javaSocket) {
             super(channel, javaSocket);

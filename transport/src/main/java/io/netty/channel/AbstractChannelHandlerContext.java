@@ -85,6 +85,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
      */
     private static final int INIT = 0;
 
+    // 该context所属的pipeline
     private final DefaultChannelPipeline pipeline;
     private final String name;
     private final boolean ordered;
@@ -101,9 +102,18 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     private volatile int handlerState = INIT;
 
+    /**
+     * 构造函数
+     * @param pipeline 该context所属的pipeline
+     * @param executor executor
+     * @param name 该context的name
+     * @param handlerClass 该context里的handler的Class类型
+     * @author wenpan 2023/12/17 11:41 上午
+     */
     AbstractChannelHandlerContext(DefaultChannelPipeline pipeline, EventExecutor executor,
                                   String name, Class<? extends ChannelHandler> handlerClass) {
         this.name = ObjectUtil.checkNotNull(name, "name");
+        // 该context所属的pipeline
         this.pipeline = pipeline;
         this.executor = executor;
         this.executionMask = mask(handlerClass);

@@ -28,6 +28,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
     private static final long START_TIME = System.nanoTime();
 
     static long nanoTime() {
+        // 当前时间 - 系统启动时间
         return System.nanoTime() - START_TIME;
     }
 
@@ -119,6 +120,7 @@ final class ScheduledFutureTask<V> extends PromiseTask<V> implements ScheduledFu
     }
 
     static long deadlineToDelayNanos(long deadlineNanos) {
+        // 可以看到这里的相对时间的计算方法就是 deadlineNanos - 当前时间
         return deadlineNanos == 0L ? 0L : Math.max(0L, deadlineNanos - nanoTime());
     }
 

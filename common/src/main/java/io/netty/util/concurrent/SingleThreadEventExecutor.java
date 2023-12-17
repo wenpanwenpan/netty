@@ -289,18 +289,27 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         }
     }
 
+    /**
+     *  循环获取到期的定时任务并放入reactor线程队列
+     *  1、返回值为true时表示到期的定时任务已经全部拉取出来并转存到普通任务队列中。
+     *  2、返回值为false时表示到期的定时任务只拉取出来一部分，因为这时普通任务队列已经满了，当执行完普通任务时，还需要在进行一次拉取
+     * @author wenpan 2023/12/17 8:18 下午
+     */
     private boolean fetchFromScheduledTaskQueue() {
         if (scheduledTaskQueue == null || scheduledTaskQueue.isEmpty()) {
             return true;
         }
         long nanoTime = AbstractScheduledEventExecutor.nanoTime();
         for (;;) {
+            // 从定时任务队列中取出到达执行deadline的定时任务  deadline <= nanoTime
             Runnable scheduledTask = pollScheduledTask(nanoTime);
             if (scheduledTask == null) {
                 return true;
             }
+            // 如果获取到了到期的定时任务，则将定时任务放到普通任务队列
             if (!taskQueue.offer(scheduledTask)) {
                 // No space left in the task queue add it back to the scheduledTaskQueue so we pick it up again.
+                // 如果普通任务队列放不下了，则放回定时任务队列
                 scheduledTaskQueue.add((ScheduledFutureTask<?>) scheduledTask);
                 return false;
             }
@@ -383,22 +392,30 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * Poll all tasks from the task queue and run them via {@link Runnable#run()} method.
      *
      * @return {@code true} if and only if at least one task was run
+     * 运行reactor上的异步任务
      */
     protected boolean runAllTasks() {
+        // 老套路，首先判断当前线程是否是reactor的线程
         assert inEventLoop();
         boolean fetchedAll;
         boolean ranAtLeastOne = false;
 
         do {
+            // 从定时任务队列将当前待执行的任务转移到任务队列
             fetchedAll = fetchFromScheduledTaskQueue();
+            // 从异步任务队列里取出任务执行
             if (runAllTasksFrom(taskQueue)) {
+                // 至少执行了一次异步任务，这个后面netty解决JDK空轮询bug的时候还会用到
                 ranAtLeastOne = true;
             }
+            // 如果 fetchedAll 为false，则表示定时任务队列里还存在需要立即执行的异步任务，所以需要再次循环
         } while (!fetchedAll); // keep on processing until we fetched all scheduled tasks.
 
+        // 如果至少执行了一次异步任务，则更新上次执行时间
         if (ranAtLeastOne) {
             lastExecutionTime = ScheduledFutureTask.nanoTime();
         }
+        // 执行tail队列里的任务
         afterRunningAllTasks();
         return ranAtLeastOne;
     }
@@ -437,12 +454,16 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * @return {@code true} if at least one task was executed.
      */
     protected final boolean runAllTasksFrom(Queue<Runnable> taskQueue) {
+        // 从任务队列里取出任务
         Runnable task = pollTaskFrom(taskQueue);
+        // 如果任务队列里没有任务了则返回false 表示一个任务也没执行
         if (task == null) {
             return false;
         }
         for (;;) {
+            // 执行任务
             safeExecute(task);
+            // 执行完一个任务后继续从任务队列里poll任务，直到队列里没有任务了
             task = pollTaskFrom(taskQueue);
             if (task == null) {
                 return true;
@@ -473,39 +494,55 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
     /**
      * Poll all tasks from the task queue and run them via {@link Runnable#run()} method.  This method stops running
      * the tasks in the task queue and returns if it ran longer than {@code timeoutNanos}.
+     * timeoutNanos 表示异步任务执行能用的时间
+     * @return 返回是否至少执行了一个异步任务，true：表示至少执行了一个异步任务，false表示一个异步任务都没有执行
      */
     protected boolean runAllTasks(long timeoutNanos) {
+        // 从定时任务队列里拿一个到期的任务转移到普通任务队列
         fetchFromScheduledTaskQueue();
+        // 从普通任务队列里获取一个任务
         Runnable task = pollTask();
         if (task == null) {
+            // 当普通队列和定时任务队列里也没有当前时间能执行的任务，则执行tail队列里的任务
             afterRunningAllTasks();
             return false;
         }
-
+        // 异步任务执行的截止时间
         final long deadline = timeoutNanos > 0 ? ScheduledFutureTask.nanoTime() + timeoutNanos : 0;
+        // 执行异步任务的个数
         long runTasks = 0;
+        // 最近一个异步任务执行的时间
         long lastExecutionTime;
         for (;;) {
+            // 执行异步任务，这里就算异步任务执行失败了也不会抛出异常
             safeExecute(task);
-
+            // 执行的异步任务个数+1
             runTasks ++;
 
             // Check timeout every 64 tasks because nanoTime() is relatively expensive.
             // XXX: Hard-coded value - will make it configurable if it is really a problem.
+            // 由于系统调用System.nanoTime()需要一定的系统开销，所以每执行完64个异步任务的时候才会去检查一下执行时间是否到达了deadline。
+            // 如果到达了执行截止时间deadline则退出停止执行异步任务。如果没有到达deadline则继续从普通任务队列中取出任务循环执行下去。这里也是netty对性能的一个优化
+            // 0x3F = 63，当执行了64次异步任务了，这里可以看出netty的reactor线程不会一直的执行异步任务，会及时的保证io任务被执行
             if ((runTasks & 0x3F) == 0) {
                 lastExecutionTime = ScheduledFutureTask.nanoTime();
+                // 每运行64个异步任务，检查一下是否达到执行 deadline
+                // 如果上一个被执行的异步任务时间 >= deadline 并且异步任务执行个数达到了64，则跳出循环，不在继续获取异步任务并执行了，保证能即使的执行到io任务
                 if (lastExecutionTime >= deadline) {
+                    // 到达异步任务执行超时deadline，停止执行异步任务
                     break;
                 }
             }
 
             task = pollTask();
             if (task == null) {
+                // 队列里没有待执行的任务了，跳出循环
                 lastExecutionTime = ScheduledFutureTask.nanoTime();
                 break;
             }
         }
 
+        // 执行tail队列里的任务
         afterRunningAllTasks();
         this.lastExecutionTime = lastExecutionTime;
         return true;
@@ -829,6 +866,8 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         return isTerminated();
     }
 
+    // 由于该类（SingleThreadEventExecutor）也实现了Executor接口，表示该类也是个线程池，那么一定会实现线程池的execute方法，
+    // 可以看到该类实现execute方法中，将提交的task全部为委托给了reactor线程进行执行（放入reactor线程队列，等待reactor线程执行）
     @Override
     public void execute(Runnable task) {
         ObjectUtil.checkNotNull(task, "task");
@@ -875,7 +914,11 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
             }
         }
 
+        // netty这里要表达的语义是：当immediate参数为true的时候表示该异步任务需要立即执行，addTaskWakesUp 默认设置为false
+        // 表示不仅只有addTask方法可以唤醒Reactor，还有其他方法比如这里的execute方法也可以唤醒。但是当设置为true时，
+        // 语义就变为只有addTask才可以唤醒Reactor，即使execute方法里的immediate = true也不能唤醒Reactor，因为执行的是execute方法而不是addTask方法。
         if (!addTaskWakesUp && immediate) {
+            // 提交任务的线程将Reactor线程从Selector上唤醒
             wakeup(inEventLoop);
         }
     }

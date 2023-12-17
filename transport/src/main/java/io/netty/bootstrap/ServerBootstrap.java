@@ -140,7 +140,7 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         // 2、向netty自定义的NioServerSocketChannel设置attributes
         setAttributes(channel, attrs0().entrySet().toArray(EMPTY_ATTRIBUTE_ARRAY));
 
-        // 获取到channel的pipeline（该pipeline在channel创建的时候就创建好了, @see io.netty.channel.socket.nio.NioServerSocketChannel.NioServerSocketChannel()）
+        // 获取到channel的pipeline（该pipeline在channel创建的时候就创建好了, @see io.netty.channel.AbstractChannel.AbstractChannel(io.netty.channel.Channel)）
         ChannelPipeline p = channel.pipeline();
 
         // 3、获取从Reactor线程组childGroup，以及用于初始化客户端NioSocketChannel的ChannelInitializer,ChannelOption,ChannelAttributes，
@@ -148,12 +148,12 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         // 因为后续会在ServerBootstrapAcceptor中接收客户端连接以及创建NioServerChannel。
         // 获取从Reactor线程组
         final EventLoopGroup currentChildGroup = childGroup;
-        // 获取用于初始化客户端NioSocketChannel的ChannelInitializer
+        // 获取用于初始化客户端NioSocketChannel的ChannelInitializer（在启动类里通过 childHandler 方法添加的）
         final ChannelHandler currentChildHandler = childHandler;
         // 获取用户配置的客户端SocketChannel的channelOption以及attributes
         final Entry<ChannelOption<?>, Object>[] currentChildOptions;
         synchronized (childOptions) {
-            // 可以看到 currentChildOptions 取的是childOptions（表示：用户为客户端channel设置的一些配置信息）
+            // 可以看到 currentChildOptions 取的是childOptions（表示：用户为客户端channel设置的一些配置信息）,在启动类中通过 childOption()方法添加
             currentChildOptions = childOptions.entrySet().toArray(EMPTY_OPTION_ARRAY);
         }
         // 用户为客户端channel设置的一些attribute

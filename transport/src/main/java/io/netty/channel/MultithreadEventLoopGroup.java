@@ -85,6 +85,8 @@ public abstract class MultithreadEventLoopGroup extends MultithreadEventExecutor
     @Override
     protected abstract EventLoop newChild(Executor executor, Object... args) throws Exception;
 
+    // 由于该类表示reactor线程组，当channel通过reactor线程组向某个reactor进行注册时，
+    // 第一步就是要从reactor组中按照一定策略选取一个reactor来进行注册，选取逻辑就在下面的next里
     @Override
     public ChannelFuture register(Channel channel) {
         // 按策略选取出一个reactor，然后将channel注册到上面，@see SingleThreadEventLoop

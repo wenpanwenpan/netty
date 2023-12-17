@@ -51,7 +51,7 @@ public final class EchoServer {
         }
 
         // Configure the server.
-        // 创建主从reactor线程组
+        // 创建主从reactor线程组，由于主reactor一般都只监听一个端口，所以设置reactor个数为1即可，从reactor如果不指定数量，则默认为cpu核数 * 2
         EventLoopGroup bossGroup = new NioEventLoopGroup(1);
         EventLoopGroup workerGroup = new NioEventLoopGroup();
         final EchoServerHandler serverHandler = new EchoServerHandler();

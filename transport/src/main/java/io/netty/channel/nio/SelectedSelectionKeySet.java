@@ -108,7 +108,7 @@ final class SelectedSelectionKeySet extends AbstractSet<SelectionKey> {
     }
 
     void reset(int start) {
-        // 将数组从start开始到size结束全部置为null
+        // 将数组从start开始到size结束全部置为null，也就是将注册在selector上的某些channel释放掉（一般是无效的channel）
         Arrays.fill(keys, start, size, null);
         size = 0;
     }

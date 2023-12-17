@@ -124,12 +124,15 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
      * You should use {@link #nanoTime()} to retrieve the correct {@code nanoTime}.
      */
     protected final Runnable pollScheduledTask(long nanoTime) {
+        // 必须在reactor线程中
         assert inEventLoop();
 
+        // 从定时任务队列里peek一个任务，如果为空或者定时任务的deadline时间在当前时间之后，则说明最近的定时任务还未到期
         ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
         if (scheduledTask == null || scheduledTask.deadlineNanos() - nanoTime > 0) {
             return null;
         }
+        // 将这个定时任务从定时队列中移除，并且设置该任务已经被消费过了
         scheduledTaskQueue.remove();
         scheduledTask.setConsumed();
         return scheduledTask;
@@ -148,11 +151,14 @@ public abstract class AbstractScheduledEventExecutor extends AbstractEventExecut
      * if no task is scheduled.
      */
     protected final long nextScheduledTaskDeadlineNanos() {
+        // 获取定时任务
         ScheduledFutureTask<?> scheduledTask = peekScheduledTask();
+        // 获取定时任务执行时间
         return scheduledTask != null ? scheduledTask.deadlineNanos() : -1;
     }
 
     final ScheduledFutureTask<?> peekScheduledTask() {
+        // 可以看到这里就是从定时任务中peek了一下任务
         Queue<ScheduledFutureTask<?>> scheduledTaskQueue = this.scheduledTaskQueue;
         return scheduledTaskQueue != null ? scheduledTaskQueue.peek() : null;
     }

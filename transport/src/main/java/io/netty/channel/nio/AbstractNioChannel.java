@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Abstract base class for {@link Channel} implementations which use a Selector based approach.
+ * AbstractNioChannel 是netty实现的channel，SelectableChannel 是JDK NIO的channel，这里netty的channel对JDK的channel进行了封装
  */
 public abstract class AbstractNioChannel extends AbstractChannel {
 
@@ -54,7 +55,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     private final SelectableChannel ch;
     // Channel监听事件集合，比如： NioServerSocketChannel里是SelectionKey.OP_ACCEPT事件
     protected final int readInterestOp;
-    //channel注册到Selector后获得的SelectKey
+    //channel注册到Selector后获得的SelectKey（selectKey里包含了channel以及selector）
     volatile SelectionKey selectionKey;
     boolean readPending;
     private final Runnable clearReadPendingRunnable = new Runnable() {
@@ -110,6 +111,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         return (NioUnsafe) super.unsafe();
     }
 
+    /**获取原生JDK NIO的channel，该channel在创建nettychannel的时候被赋值*/
     protected SelectableChannel javaChannel() {
         return ch;
     }
@@ -215,6 +217,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         void forceFlush();
     }
 
+    /**unsafe类中封装了channel底层操作，该抽象类封装了一些公用的方法*/
     protected abstract class AbstractNioUnsafe extends AbstractUnsafe implements NioUnsafe {
 
         protected final void removeReadOp() {
@@ -383,7 +386,8 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         boolean selected = false;
         for (;;) {
             try {
-                // register 参数1：要将channel注册到哪个selector上，
+                // register 先获取Jdk NIO原生的channel对象
+                // 参数1：要将channel注册到哪个selector上，
                 // 参数2：表示Channel上感兴趣的IO事件，当对应的IO事件就绪时，Selector会返回Channel对应的SelectionKey
                 // 参数3： 向SelectionKey中添加用户自定义的附加对象（通过SelectableChannel#register方法将Netty自定义的NioServerSocketChannel（这里的this指针）
                 // 附着在SelectionKey的attechment属性上，完成Netty自定义Channel与JDK NIO Channel的关系绑定。这样在每次对Selector进行IO就绪事件轮询时，
@@ -407,6 +411,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
     @Override
     protected void doDeregister() throws Exception {
+        // 获取该channel绑定的reactor，并从该reactor的selector上取消该channel的注册
         eventLoop().cancel(selectionKey());
     }
 
