@@ -165,6 +165,7 @@ public abstract class AbstractByteBufAllocator implements ByteBufAllocator {
             return emptyBuf;
         }
         validate(initialCapacity, maxCapacity);
+        // 这里可以分配内存池里的内存也可以分配非池化内存，看具体实现
         return newHeapBuffer(initialCapacity, maxCapacity);
     }
 

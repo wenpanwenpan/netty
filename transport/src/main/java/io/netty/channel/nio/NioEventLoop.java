@@ -860,7 +860,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     // 处理selector上的io就绪事件
     private void processSelectedKey(SelectionKey k, AbstractNioChannel ch) {
-        // 获取Channel的底层操作类Unsafe
+        // 获取Channel的底层操作类Unsafe（对于NIOServerSocketChannel来说这里的unsafe是NioMessageUnsafe，对于NIOSocketChannel来说这里的unsafe是NioByteUnsafe）
         final AbstractNioChannel.NioUnsafe unsafe = ch.unsafe();
         // 如果SelectionKey已经失效则关闭对应的Channel
         if (!k.isValid()) {
@@ -916,10 +916,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
             // Also check for readOps of 0 to workaround possible JDK bug which may otherwise lead
             // to a spin loop
-            //处理Read事件或者Accept事件
+            // 【重点】NIOServerSocketChannel的accept事件和NIOSocketChannel的read事件都是在这儿处理的，处理Read事件或者Accept事件，这里巧妙的使用了位运算来表达
             if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
                 // 这里可以看出Netty中处理Read事件和Accept事件都是由对应Channel中的Unsafe操作类中的read方法处理。
-                //服务端NioServerSocketChannel中的Read方法处理的是Accept事件，客户端NioSocketChannel中的Read方法处理的是Read事件。
+                // 服务端NioServerSocketChannel中的Read方法处理的是Accept事件，客户端NioSocketChannel中的Read方法处理的是Read事件。
+                // 所以说如果要阅读 NioServerSocketChannel 是如何接受客户端连接并注册到sub reactor中的，那么就从这里开始
                 unsafe.read();
             }
         } catch (CancelledKeyException ignored) {

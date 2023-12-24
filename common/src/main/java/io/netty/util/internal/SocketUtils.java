@@ -116,6 +116,8 @@ public final class SocketUtils {
             return AccessController.doPrivileged(new PrivilegedExceptionAction<SocketChannel>() {
                 @Override
                 public SocketChannel run() throws IOException {
+                    // 调用serverSocketChannel的accept方法从已完成三次握手的内核全连接队列获取客户端，如果是非阻塞，
+                    // 则没有client的时候就返回null, @see io.netty.channel.nio.AbstractNioChannel.AbstractNioChannel
                     return serverSocketChannel.accept();
                 }
             });

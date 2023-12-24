@@ -243,17 +243,28 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         @Override
         @SuppressWarnings("unchecked")
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            // client NIOSocketChannel
             final Channel child = (Channel) msg;
-
+            // 给创建的 NIOSocketChannel 上新增handler，这里就是我们通过 ServerBootstrap 指定的
             child.pipeline().addLast(childHandler);
-
+            // 利用配置的属性初始化客户端NioSocketChannel，将我们在 ServerBootstrap 中指定的有关 NIOSocketChannel 的option和attrs设置到channel上
             setChannelOptions(child, childOptions, logger);
             setAttributes(child, childAttrs);
 
             try {
+                /*
+                 * 1：在Sub Reactor线程组中选择一个Reactor绑定
+                 * 2：将客户端SocketChannel注册到绑定的Reactor上
+                 * 3：SocketChannel注册到sub reactor中的selector上，并监听OP_READ事件
+                 * 客户端NioSocketChannel向Sub Reactor Group注册的流程基本完全和服务端NioServerSocketChannel向Main Reactor Group注册流程一样
+                 * */
+                // 可以看到这里register传入的channel是NIOSocketChannel，区别于NIOServerSocketChannel注册时传入的channel为 NIOServerSocketChannel
+                // @see io.netty.bootstrap.AbstractBootstrap.initAndRegister
                 childGroup.register(child).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture future) throws Exception {
+                        // 在服务端NioServerSocketChannel注册的时候我们会在listener中向Main Reactor提交bind绑定端口地址任务。(@see io.netty.bootstrap.AbstractBootstrap.doBind)
+                        // 但是在NioSocketChannel注册的时候，只会在listener中处理一下注册失败的情况。
                         if (!future.isSuccess()) {
                             forceClose(child, future.cause());
                         }

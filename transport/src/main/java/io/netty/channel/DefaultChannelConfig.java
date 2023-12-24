@@ -57,6 +57,7 @@ public class DefaultChannelConfig implements ChannelConfig {
     protected final Channel channel;
 
     private volatile ByteBufAllocator allocator = ByteBufAllocator.DEFAULT;
+    // channel接收数据是的byteBuf内存分配器，用于分配byteBuf用于暂存读取的数据
     private volatile RecvByteBufAllocator rcvBufAllocator;
     private volatile MessageSizeEstimator msgSizeEstimator = DEFAULT_MSG_SIZE_ESTIMATOR;
 
@@ -69,6 +70,7 @@ public class DefaultChannelConfig implements ChannelConfig {
     private volatile boolean pinEventExecutor = true;
 
     public DefaultChannelConfig(Channel channel) {
+        // 分配ByteBuffer的一个分配器，可以看到类型为 AdaptiveRecvByteBufAllocator
         this(channel, new AdaptiveRecvByteBufAllocator());
     }
 

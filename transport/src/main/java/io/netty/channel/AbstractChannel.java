@@ -48,7 +48,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
     private final Channel parent;
     //channel全局唯一ID machineId+processId+sequence+timestamp+random
     private final ChannelId id;
-    //unsafe用于封装对底层socket的相关操作
+    //unsafe用于封装对底层socket（也就是channel）的相关操作
     private final Unsafe unsafe;
     //为channel分配独立的pipeline用于IO事件编排，可以看到channel的pipeline在new channel的实例的时候就创建好了
     // pipeline其实是一个ChannelHandlerContext类型的双向链表。头结点HeadContext,尾结点TailContext。ChannelHandlerContext中包装着ChannelHandler,用于事件传播
@@ -447,8 +447,12 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
         @Override
         public RecvByteBufAllocator.Handle recvBufAllocHandle() {
             if (recvHandle == null) {
+                // 可以看到是从 channel 的config里获取到byteBuf分配器AdaptiveRecvByteBufAllocator
+                // 可以看到 getRecvByteBufAllocator 返回的就是在创建channel配置类时创建的byteBuf分配器, @see SocketChannelConfig, ServerSocketChannelConfig
+                // （对NIOServerSocketChannel来说就是 AdaptiveRecvByteBufAllocator，具体可见 NIOServerSocketChannel 构造函数）
                 recvHandle = config().getRecvByteBufAllocator().newHandle();
             }
+            // 当 recvHandle 被创建过一次后便会被保存下来，避免下次重复创建
             return recvHandle;
         }
 
@@ -497,6 +501,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
              * 1: 如果当前执行线程是Reactor线程，则直接执行register0进行注册
              * 2：如果当前执行线程是外部线程(比如netty启动过程中，这里就是main线程)，则需要将register0注册操作 封装程异步Task 由Reactor线程执行
              * */
+            // 对于 NIOServerSocketChannel 启动时将自己注入到reactor上来说，这里的线程就是main线程，并不是 main reactor线程
+            // 对于 NIOSocketChannel 来说，当 NIOServerSocketChannel 创建好 NIOSocketChannel 后需要将 NIOServerSocketChannel 注册到reactor上
+            // 那么这里的当前线程指的就是 main reactor 线程，所以这两种情况的注册 eventLoop.inEventLoop() 都是false
             if (eventLoop.inEventLoop()) {
                 // 3、注册
                 register0(promise);
@@ -506,11 +513,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 // 用户程序Main线程向Main Reactor提交用于注册NioServerSocketChannel的异步任务时(也就是这里)开始启动
                 try {
                     // 【第一次向reactor线程队列里提交任务时才开始启动reactor线程的创建和执行】
-                    //@see io.netty.util.concurrent.SingleThreadEventExecutor.execute(java.lang.Runnable)
+                    // main reactor线程和 sub reactor线程都是在这里创建和启动的
+                    // 对于 NIOSocketChannel 注册的地方见：io.netty.bootstrap.ServerBootstrap.ServerBootstrapAcceptor.channelRead
+                    // 对于 NIOServerSocketChannel 注册的地方见： io.netty.bootstrap.AbstractBootstrap.initAndRegister
+                    // 具体创建和启动线程的地方 @see io.netty.util.concurrent.SingleThreadEventExecutor.execute(java.lang.Runnable)
                     eventLoop.execute(new Runnable() {
                         @Override
                         public void run() {
-                            // 将channel注册到main reactor上的核心逻辑
+                            // 如果是将NIOServerSocketChannel则将channel注册到main reactor上的核心逻辑
+                            // 如果是 NIOSocketChannel 则将channel主从到 sub reactor上
                             register0(promise);
                         }
                     });
@@ -541,7 +552,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     return;
                 }
                 boolean firstRegistration = neverRegistered;
-                // 1、【执行真正的注册操作】，将channel注册到reactor中的selector上
+                // 1、【执行真正的注册操作】，将channel注册到reactor中的selector上（NIOServerSocketChannel和NIOSocketChannel都是如此）
                 doRegister();
                 //修改注册状态
                 neverRegistered = false;
@@ -561,11 +572,15 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 pipeline.fireChannelRegistered();
                 // Only fire a channelActive if the channel has never been registered. This prevents firing
                 // multiple channel actives if the channel is deregistered and re-registered.
-                // 对于服务端ServerSocketChannel来说 只有绑定端口地址成功后 channel的状态才是active的。
+                // 对于服务端ServerSocketChannel来说 只有绑定端口地址成功后 channel的状态才是active的 （@see io.netty.channel.socket.nio.NioServerSocketChannel.isActive）。
                 // 此时（netty启动过程中channel向reactor注册时）绑定操作作为异步任务在Reactor的任务队列中，绑定操作还没开始，所以这里的isActive()是false
+                // 对于 client channel 来说, 客户端NioSocketChannel判断是否激活的标准为是否处于Connected状态。那么显然这里肯定是处于connected状态的。
+                // @see io.netty.channel.socket.nio.NioSocketChannel.isActive
                 if (isActive()) {
                     if (firstRegistration) {
-                        //触发channelActive事件，该pipeline上的handler里的channelActive方法就会被回调
+                        // 触发channelActive事件，该pipeline上的handler里的channelActive方法就会被回调
+                        // 对客户端SocketChannel来说，注册成功后会走这里，在channelActive事件回调中注册OP_READ事件,
+                        // 在NioSocketChannel中的pipeline传播ChannelActive事件，最终在pipeline的头结点HeadContext中响应并注册OP_READ事件到Sub Reactor中的Selector上
                         pipeline.fireChannelActive();
                     } else if (config().isAutoRead()) {
                         // This channel was registered before and autoRead() is set. This means we need to begin read

@@ -201,6 +201,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     public interface NioUnsafe extends Unsafe {
         /**
          * Return underlying {@link SelectableChannel}
+         * 获取JDK 底层的channel
          */
         SelectableChannel ch();
 
@@ -211,6 +212,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
         /**
          * Read from underlying {@link SelectableChannel}
+         * 从底层channel（socket）里读取数据
          */
         void read();
 
@@ -391,6 +393,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
                 // 参数2：表示Channel上感兴趣的IO事件，当对应的IO事件就绪时，Selector会返回Channel对应的SelectionKey
                 // 参数3： 向SelectionKey中添加用户自定义的附加对象（通过SelectableChannel#register方法将Netty自定义的NioServerSocketChannel（这里的this指针）
                 // 附着在SelectionKey的attechment属性上，完成Netty自定义Channel与JDK NIO Channel的关系绑定。这样在每次对Selector进行IO就绪事件轮询时，
+                // 这里是Netty客户端NioSocketChannel与JDK NIO 原生 SocketChannel关联的地方。此时注册的IO事件依然是0。目的也是只是为了获取NioSocketChannel在Selector中的SelectionKey。
                 // Netty 都可以从 JDK NIO Selector返回的SelectionKey中获取到自定义的Channel对象（这里指的就是NioServerSocketChannel））
                 selectionKey = javaChannel().register(eventLoop().unwrappedSelector(), 0, this);
                 return;
@@ -427,8 +430,10 @@ public abstract class AbstractNioChannel extends AbstractChannel {
 
         /**
          * 1：ServerSocketChannel 初始化时 readInterestOp设置的是OP_ACCEPT事件
+         * 2：SocketChannel 初始化时 readInterestOp设置的是OP_READ事件
          * */
         final int interestOps = selectionKey.interestOps();
+        // (interestOps & readInterestOp) == 0 表示要新增的感兴趣事件不在已有的感兴趣事件集合内，那么就添加他（取或运算）
         if ((interestOps & readInterestOp) == 0) {
             //添加OP_ACCEPT事件到interestOps集合中，这里可以看到使用位运算或来表示将某个感兴趣的事件添加到集合中，细节的性能优化真是分毫必争啊
             selectionKey.interestOps(interestOps | readInterestOp);

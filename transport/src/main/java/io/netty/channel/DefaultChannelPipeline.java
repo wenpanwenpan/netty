@@ -653,6 +653,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
             firstRegistration = false;
             // We are now registered to the EventLoop. It's time to call the callbacks for the ChannelHandlers,
             // that were added before the registration was done.
+            // 如果是第一次注册，则这里会初始化channel上的pipeline，为pipeline上添加handler
             callHandlerAddedForAllHandlers();
         }
     }
@@ -1103,6 +1104,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         }
     }
 
+    // 调用pipeline上的所有handler的handlerAdd方法，目的是为该pipeline上添加handler，常用于pipeline的handler初始化添加
     private void callHandlerAddedForAllHandlers() {
         final PendingHandlerCallback pendingHandlerCallbackHead;
         synchronized (this) {
@@ -1392,6 +1394,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) {
             invokeHandlerAddedIfNeeded();
+            // 在 pipeline上传播channel注册到reactor成功事件
             ctx.fireChannelRegistered();
         }
 
@@ -1478,6 +1481,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
                 callHandlerAdded0(ctx);
             } else {
                 try {
+                    // 这里的execute方法其实就是执行的上面的run，然后在run方法里调用了callHandlerAdded0，这里可以理解为在线程池中调用 callHandlerAdded0 方法
                     executor.execute(this);
                 } catch (RejectedExecutionException e) {
                     if (logger.isWarnEnabled()) {

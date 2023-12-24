@@ -109,6 +109,8 @@ public abstract class SingleThreadEventLoop extends SingleThreadEventExecutor im
         ObjectUtil.checkNotNull(promise, "promise");
         //unsafe负责channel底层的各种操作
         // 获取到channel上的unsafe对象，然后利用unsafe对象将channel注册到Reactor上
+        // 对于server端NIOServerSocketChannel来说这里的unsafe是 io.netty.channel.nio.AbstractNioMessageChannel.NioMessageUnsafe
+        // 对于client的NIOSocketChannel来说这里的unsafe是 io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe
         promise.channel().unsafe().register(this, promise);
         return promise;
     }

@@ -114,6 +114,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
 
     @Override
     public ServerSocketChannelConfig config() {
+        // 返回 NIOServerSocketChannel 相关的配置类
         return config;
     }
 
@@ -121,6 +122,8 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
     public boolean isActive() {
         // As java.nio.ServerSocketChannel.isBound() will continue to return true even after the channel was closed
         // we will also need to check if it is open.
+        // 对于 NIOServerSocketChannel来说必须要绑定了端口，这里才会返回true，表示该socket是活跃的
+        // 服务端NioServerSocketChannel判断是否激活的标准为端口是否绑定成功。
         return isOpen() && javaChannel().socket().isBound();
     }
 
@@ -155,13 +158,26 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
         javaChannel().close();
     }
 
+    /**
+     * 从内核全连接队列里读取已完成三次握手的client channel，并将channel封装为 NioSocketChannel 并添加到buf集合中
+     * @author wenpan 2023/12/24 10:12 上午
+     */
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
+        // 从内核的全连接队列里获取已完成三次握手的client连接（这里就是client channel被创建的地方）
+        // 由于我们在启动的时候设置了NIOServerSocketChannel为非阻塞，所以这里如果全连接队列里没有已完成三次握手的client连接，也不会阻塞，ch就是null
+        // 通过javaChannel()获取封装在Netty服务端NioServerSocketChannel中的JDK 原生 ServerSocketChannel
         SocketChannel ch = SocketUtils.accept(javaChannel());
 
         try {
+            // 由于我们的NIOServerSocketChannel在创建的时候就被设置为非阻塞的，所以上面SocketUtils.accept如果全连接队列里没有
+            // 已完三次握手的client，则不会阻塞，而是返回null ，@see io.netty.channel.nio.AbstractNioChannel.AbstractNioChannel
             if (ch != null) {
+                // 将创建出来的client channel暂存到 buf 集合中，NioSocketChannel是由NIOServerSocketChannel创建的
+                // 所以将NIOSocketChannel的parent指定为 NioSocketChannel，创建 NioSocketChannel 的过程和之前reactor启动时
+                // 创建NIOServerSocketChannel大体一致，有些区别的地方从这里点进去看
                 buf.add(new NioSocketChannel(this, ch));
+                // 可以看到对于NIOServerSocketChannel来说，每次从全连接队列里获取到一个client连接后就返回（固定返回1）
                 return 1;
             }
         } catch (Throwable t) {
@@ -173,7 +189,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
                 logger.warn("Failed to close a socket.", t2);
             }
         }
-
+        // 没有已完成三次握手的client连接
         return 0;
     }
 

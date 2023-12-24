@@ -99,10 +99,11 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * Create a new instance
      *
      * @param parent    the {@link Channel} which created this instance or {@code null} if it was created by the user
-     * @param socket    the {@link SocketChannel} which will be used
+     * @param socket    the {@link SocketChannel} which will be used 这是JDK NIO 原生的channel
      */
     public NioSocketChannel(Channel parent, SocketChannel socket) {
         super(parent, socket);
+        // 创建用于承载 NioSocketChannel 配置的配置对象 NioSocketChannelConfig
         config = new NioSocketChannelConfig(this, socket.socket());
     }
 
@@ -124,6 +125,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
     @Override
     public boolean isActive() {
         SocketChannel ch = javaChannel();
+        // 客户端NioSocketChannel判断是否激活的标准为是否处于Connected状态
         return ch.isOpen() && ch.isConnected();
     }
 
@@ -346,7 +348,9 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
     @Override
     protected int doReadBytes(ByteBuf byteBuf) throws Exception {
         final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+        // 设置allocHandle中本次尝试读取的数据量，byteBuf.writableBytes() 表示该byteBuf 里还可写的容量
         allocHandle.attemptedBytesRead(byteBuf.writableBytes());
+        // 从 jdk nio 的channel （socket）就绪缓存区中读取数据到 bytebuf中
         return byteBuf.writeBytes(javaChannel(), allocHandle.attemptedBytesRead());
     }
 
@@ -443,6 +447,10 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         return new NioSocketChannelUnsafe();
     }
 
+    /**
+     * NioSocketChannelUnsafe 用于封装NioSocketChannel对底层的操作
+     * @author wenpan 2023/12/23 6:22 下午
+     */
     private final class NioSocketChannelUnsafe extends NioByteUnsafe {
         @Override
         protected Executor prepareToClose() {
@@ -464,8 +472,19 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         }
     }
 
+    /**
+     * NioSocketChannel 相关配置信息
+     * @author wenpan 2023/12/24 10:39 上午
+     */
     private final class NioSocketChannelConfig extends DefaultSocketChannelConfig {
         private volatile int maxBytesPerGatheringWrite = Integer.MAX_VALUE;
+        
+        /**
+         * 构造函数
+         * @param channel 这个config所关联的netty包装后的channel
+         * @param javaSocket  JDK NIO 原生的 socket
+         * @author wenpan 2023/12/24 10:39 上午
+         */
         private NioSocketChannelConfig(NioSocketChannel channel, Socket javaSocket) {
             super(channel, javaSocket);
             calculateMaxBytesPerGatheringWrite();

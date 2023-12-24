@@ -27,11 +27,14 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        // 处理网络请求，比如解码,反序列化等操作
         ctx.write(msg);
     }
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
+        // 本次OP_READ事件处理完毕
+        // 决定是否向客户端响应处理结果
         ctx.flush();
     }
 

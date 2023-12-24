@@ -57,51 +57,86 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
         super.doBeginRead();
     }
 
-    /**这个unsafe实现主要是用来操作server端channel（NIOServerSocketChannel）对底层的一些动作*/
+    /**这个unsafe实现主要是用来操作server端channel（NIOServerSocketChannel）对底层的一些动作，具体可以看类的继承关系*/
     private final class NioMessageUnsafe extends AbstractNioUnsafe {
 
+        // 存放连接建立后，创建的客户端SocketChannel。对于服务端NioServerSocketChannel来说，它上边的IO数据就是客户端的连接，
+        // 它的长度和类型都是固定的，所以在接收客户端连接的时候并不需要这样的一个ByteBuffer来接收，我们会将接收到的客户端连接存放在List<Object> readBuf集合中
         private final List<Object> readBuf = new ArrayList<Object>();
 
+        /**
+         * 这里从内核全连接队列读取完成三次握手后的client连接遵循如下规则：
+         * 1、在限定的16次读取中，已经没有新的客户端连接要接收了。退出循环。
+         * 2、从NioServerSocketChannel中读取客户端连接的次数达到了16次，无论此时是否还有客户端连接都需要退出循环（保证reactor中的异步任务也能即使得到执行）
+         *
+         * 当满足以上两个退出条件时，main reactor线程就会退出read loop，由于在read loop中接收到的客户端连接全部暂存在
+         * List<Object> readBuf集合中,随后开始遍历readBuf，在NioServerSocketChannel的pipeline中传播ChannelRead事件
+         * @author wenpan 2023/12/23 6:42 下午
+         */
         @Override
         public void read() {
+            //必须在Main Reactor线程中执行，确保处理接收客户端连接的线程必须为Main Reactor 线程
             assert eventLoop().inEventLoop();
+            //注意下面的config和pipeline都是服务端ServerSocketChannel中的（NioServerSocketChannel的属性配置类NioServerSocketChannelConfig,它是在Reactor的启动阶段被创建出来的）
+            // @see io.netty.channel.socket.nio.NioServerSocketChannel.NioServerSocketChannel(java.nio.channels.ServerSocketChannel)
             final ChannelConfig config = config();
             final ChannelPipeline pipeline = pipeline();
+            // 创建接收数据Buffer分配器（用于分配容量大小合适的byteBuffer用来容纳接收数据）
+            // 在接收连接的场景中，这里的allocHandle只是用于控制read loop的循环读取创建连接的次数。
+            // 这个buffer分配器是在哪里被创建的呢？在 NioServerSocketChannel 创建的时候会创建 NioServerSocketChannelConfig 配置
+            // 在配置的构造函数里就会创建这个buffer分配器，可以看到类型为 AdaptiveRecvByteBufAllocator ，顾名思义，
+            // 这个类型的RecvByteBufAllocator可以根据Channel上每次到来的IO数据大小来自适应动态调整ByteBuffer的容量
             final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+            // 每次读取数据前都要，重置bytebuf分配器里边的统计指标
             allocHandle.reset(config);
 
             boolean closed = false;
             Throwable exception = null;
             try {
                 try {
+                    // 可以看到这里循环在读取
                     do {
+                        // 底层调用NioServerSocketChannel->doReadMessages 创建客户端 SocketChannel（可以看到客户端连接就是在这里被创建的）
+                        // 返回值localRead表示接收到了多少客户端连接，客户端连接通过accept方法只会一个一个的接收，所以这里的localRead正常情况下都会返回1
                         int localRead = doReadMessages(readBuf);
+                        // 已无新的连接可接收则退出read loop，当localRead = 0时意味着已经没有新的客户端连接可以接收了，
+                        // 本次main reactor接收客户端的任务到这里就结束了，跳出read loop。开始新的一轮IO事件的监听处理
                         if (localRead == 0) {
                             break;
                         }
+                        // 如果说小于0，则表示关闭
                         if (localRead < 0) {
                             closed = true;
                             break;
                         }
-
+                        //统计在当前事件循环中已经读取到得Message数量（对 NIOServerSocketChannel 来说就是统计do-while循环创建连接的个数）
                         allocHandle.incMessagesRead(localRead);
+                        // 统计在当前事件循环中已经读取到得Message数量（创建连接的个数），对NIOServerSocketChannel来说，默认如果大于16次则会退出这个while循环
+                        // 这里想表达的意思是在这个read loop循环中尽可能多的去接收客户端的并发连接，同时又不影响main reactor线程执行异步任务
                     } while (allocHandle.continueReading());
                 } catch (Throwable t) {
                     exception = t;
                 }
 
                 int size = readBuf.size();
+                // 如果上面while循环里读取到的已完成三次握手的client数量大于0，则在这里统一处理
                 for (int i = 0; i < size; i ++) {
                     readPending = false;
+                    //在NioServerSocketChannel对应的pipeline中传播ChannelRead事件
+                    //初始化客户端SocketChannel，并将其绑定到Sub Reactor线程组中的一个Reactor上
+                    //所以将client注册到某个sub reactor上是在NIOServerSocketChannel的pipeline上的handler（ServerBootstrapAcceptor）
+                    // 里完成的，详情见：io.netty.bootstrap.ServerBootstrap.ServerBootstrapAcceptor.channelRead
                     pipeline.fireChannelRead(readBuf.get(i));
                 }
+                // 清除本次accept 创建的客户端SocketChannel集合
                 readBuf.clear();
                 allocHandle.readComplete();
+                // 触发NIOServerSocketChannel的pipeline上的readComplete事件传播
                 pipeline.fireChannelReadComplete();
 
                 if (exception != null) {
                     closed = closeOnReadError(exception);
-
+                    // 一旦出现异常，则在pipeline上进行传播
                     pipeline.fireExceptionCaught(exception);
                 }
 

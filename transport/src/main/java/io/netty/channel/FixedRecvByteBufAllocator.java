@@ -20,6 +20,7 @@ import static io.netty.util.internal.ObjectUtil.checkPositive;
 /**
  * The {@link RecvByteBufAllocator} that always yields the same buffer
  * size prediction.  This predictor ignores the feed back from the I/O thread.
+ * 固定大小的 byteBuf 分配器
  */
 public class FixedRecvByteBufAllocator extends DefaultMaxMessagesRecvByteBufAllocator {
 
