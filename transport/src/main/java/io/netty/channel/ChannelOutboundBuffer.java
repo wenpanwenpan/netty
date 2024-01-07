@@ -797,14 +797,23 @@ public final class ChannelOutboundBuffer {
         boolean processMessage(Object msg) throws Exception;
     }
 
+    // channelOutboundBuffer 里的Entry，用于暂存 channel中用户要发送的数据 channelOutboundBuffer，每条用户要发送的数据都是一个entry
     static final class Entry {
+
+        // Entry对象池的引用，可以看到这是一个静态的final的变量
+        // 匿名实现 ObjectCreator接口来定义对象创建的行为方法。
+        // ObjectPool#newPool 创建用于管理Entry对象的对象池
         private static final ObjectPool<Entry> RECYCLER = ObjectPool.newPool(new ObjectCreator<Entry>() {
+            // 创建池化对象
             @Override
             public Entry newObject(Handle<Entry> handle) {
+                // 在对象池创建对象时，会为池化对象创建其在对象池中的句柄Handler，随后将Handler传入创建好的池化对象中。
+                // 当对象使用完毕后，我们可以通过Handler来将对象回收至对象池中等待下次继续使用。
                 return new Entry(handle);
             }
         });
 
+        //recyclerHandle用于回收对象
         private final Handle<Entry> handle;
         Entry next;
         Object msg;
@@ -821,8 +830,12 @@ public final class ChannelOutboundBuffer {
             this.handle = handle;
         }
 
+        // 由于Entry对象在设计上是被对象池管理的，所以不能对外提供public构造函数，无法在外面直接创建Entry对象。
+        //所以池化对象都会提供一个获取对象实例的 static 方法 newInstance。在该方法中通过RECYCLER.get()从对象池中获取对象实例
         static Entry newInstance(Object msg, int size, long total, ChannelPromise promise) {
+            // 从内存池获取一个池化对象
             Entry entry = RECYCLER.get();
+            // 初始化池化对象相关属性
             entry.msg = msg;
             entry.pendingSize = size + CHANNEL_OUTBOUND_BUFFER_ENTRY_OVERHEAD;
             entry.total = total;
@@ -849,7 +862,9 @@ public final class ChannelOutboundBuffer {
             return 0;
         }
 
+        // 回收池化对象（将池化对象归还给对象池）
         void recycle() {
+            // 将池化对象相关属性置为初始状态
             next = null;
             bufs = null;
             buf = null;
@@ -860,6 +875,7 @@ public final class ChannelOutboundBuffer {
             pendingSize = 0;
             count = -1;
             cancelled = false;
+            // 通过池化对象在对象池中的句柄（handle）来将池化对象归还给对象池
             handle.recycle(this);
         }
 

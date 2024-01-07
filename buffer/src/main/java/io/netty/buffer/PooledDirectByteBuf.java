@@ -27,6 +27,7 @@ import java.nio.ByteBuffer;
 
 final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
 
+    /**对象池的引用，这个对象池的实例就是专门用来分配和管理被池化对象的*/
     private static final ObjectPool<PooledDirectByteBuf> RECYCLER = ObjectPool.newPool(
             new ObjectCreator<PooledDirectByteBuf>() {
         @Override
@@ -35,7 +36,9 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
         }
     });
 
+    // 从对象池中获取一个池化对象
     static PooledDirectByteBuf newInstance(int maxCapacity) {
+        // 从对象池里获取对象
         PooledDirectByteBuf buf = RECYCLER.get();
         buf.reuse(maxCapacity);
         return buf;

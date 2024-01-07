@@ -28,6 +28,8 @@ import java.nio.channels.ScatteringByteChannel;
 
 abstract class PooledByteBuf<T> extends AbstractReferenceCountedByteBuf {
 
+    // 池化对象在对象池里的句柄，每个池化对象中都会包含一个recyclerHandle，这个recyclerHandle是池化对象在对象池中的句柄。
+    // 里边封装了和对象池相关的一些行为和信息，recyclerHandle是由对象池在创建真实的池化对象后传递进来的
     private final Handle<PooledByteBuf<T>> recyclerHandle;
 
     protected PoolChunk<T> chunk;
@@ -175,7 +177,9 @@ abstract class PooledByteBuf<T> extends AbstractReferenceCountedByteBuf {
         }
     }
 
+    // 回收对象到对象池
     private void recycle() {
+        // 通过池化对象在对象池里的句柄来回收真实的池化对象
         recyclerHandle.recycle(this);
     }
 

@@ -531,6 +531,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     /**
      * 这个方法就是reactor线程运转的核心逻辑了，可以看到是一个死循环
+     * main reactor线程的运行逻辑和sub reactor线程的运行逻辑都是这个
      */
     @Override
     protected void run() {

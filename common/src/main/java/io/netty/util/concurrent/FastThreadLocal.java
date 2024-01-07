@@ -139,6 +139,7 @@ public class FastThreadLocal<V> {
             return (V) v;
         }
 
+        // 第一次调用get，则触发初始化方法
         return initialize(threadLocalMap);
     }
 
@@ -174,6 +175,7 @@ public class FastThreadLocal<V> {
     private V initialize(InternalThreadLocalMap threadLocalMap) {
         V v = null;
         try {
+            // 调用初始化方法获取初始值
             v = initialValue();
         } catch (Exception e) {
             PlatformDependent.throwException(e);

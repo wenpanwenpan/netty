@@ -430,7 +430,9 @@ final class PoolThreadCache {
             chunk.arena.freeChunk(chunk, handle, entry.normCapacity, sizeClass, nioBuffer, finalizer);
         }
 
+        /**池化对象*/
         static final class Entry<T> {
+            // 池化对象在对象池中的表示，默认是DefaultHandle
             final Handle<Entry<?>> recyclerHandle;
             PoolChunk<T> chunk;
             ByteBuffer nioBuffer;
@@ -441,10 +443,13 @@ final class PoolThreadCache {
                 this.recyclerHandle = recyclerHandle;
             }
 
+            /**归还池化对象给对象池*/
             void recycle() {
+                // 清空池化对象的属性
                 chunk = null;
                 nioBuffer = null;
                 handle = -1;
+                // 将当前对象通过 recyclerHandle 归还给对象池
                 recyclerHandle.recycle(this);
             }
         }
@@ -459,11 +464,16 @@ final class PoolThreadCache {
             return entry;
         }
 
+        /**
+         * Entry 对象池
+         * wenpan 2024/1/6 5:37 下午
+         */
         @SuppressWarnings("rawtypes")
         private static final ObjectPool<Entry> RECYCLER = ObjectPool.newPool(new ObjectCreator<Entry>() {
             @SuppressWarnings("unchecked")
             @Override
             public Entry newObject(Handle<Entry> handle) {
+                // 创建一个池化对象
                 return new Entry(handle);
             }
         });
