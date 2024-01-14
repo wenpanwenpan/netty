@@ -47,6 +47,7 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
             StacklessCancellationException.newInstance(DefaultPromise.class, "cancel(...)"));
     private static final StackTraceElement[] CANCELLATION_STACK = CANCELLATION_CAUSE_HOLDER.cause.getStackTrace();
 
+    // 最终结果
     private volatile Object result;
     // reactor线程
     private final EventExecutor executor;
@@ -118,6 +119,11 @@ public class DefaultPromise<V> extends AbstractFuture<V> implements Promise<V> {
         return setFailure0(cause);
     }
 
+    /**
+     * 设置不可被取消
+     * @return boolean true：表示成功设置为不可被取消，false：表示任务已经被取消
+     * @author wenpan 2024/1/14 11:39 上午
+     */
     @Override
     public boolean setUncancellable() {
         if (RESULT_UPDATER.compareAndSet(this, null, UNCANCELLABLE)) {

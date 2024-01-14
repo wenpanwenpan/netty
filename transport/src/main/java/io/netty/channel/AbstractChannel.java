@@ -434,8 +434,12 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
      */
     protected abstract class AbstractUnsafe implements Unsafe {
 
+        // 每个channel里持有一个用于操作channel的底层的unsafe对象，每个unsafe对象里一个 outboundBuffer 缓冲区，所以可以说 outboundBuffer 就是channel的发送缓冲区
+        //待发送数据缓冲队列  Netty是全异步框架，所以这里需要一个缓冲队列来缓存用户需要发送的数据，Netty 将这些用户需要发送的网络数据
+        // 在写入到 Socket 之前，先放在 ChannelOutboundBuffer 中缓存
         private volatile ChannelOutboundBuffer outboundBuffer = new ChannelOutboundBuffer(AbstractChannel.this);
         private RecvByteBufAllocator.Handle recvHandle;
+        //是否正在进行flush操作(将 ChannelOutboundBuffer 队列里的entry刷写到socket缓冲区)
         private boolean inFlush0;
         /** true if the channel has never been registered, false otherwise */
         private boolean neverRegistered = true;
@@ -788,6 +792,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             closeInitiated = true;
 
             final boolean wasActive = isActive();
+            //待发送数据缓冲队列  Netty是全异步框架，所以这里需要一个缓冲队列来缓存用户需要发送的数据
             final ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
             this.outboundBuffer = null; // Disallow adding any messages and flushes to outboundBuffer.
             Executor closeExecutor = prepareToClose();
@@ -941,7 +946,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
         @Override
         public final void write(Object msg, ChannelPromise promise) {
             assertEventLoop();
-
+            //获取当前channel对应的待发送数据缓冲队列（支持用户异步写入的核心关键）
             ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
             if (outboundBuffer == null) {
                 try {
@@ -960,7 +965,11 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             int size;
             try {
+                //过滤message类型 这里只会接受DirectBuffer或者 fileRegion 类型的msg
+                // FileRegion 是Netty定义的用来通过零拷贝的方式网络传输文件数据(这里先不管他)
+                // 在网络数据传输的过程中，Netty为了减少数据从 堆内内存 到 堆外内存 的拷贝以及缓解GC的压力，所以这里必须采用 DirectByteBuffer 使用堆外内存来存放网络发送数据
                 msg = filterOutboundMessage(msg);
+                //计算当前msg的大小
                 size = pipeline.estimatorHandle().size(msg);
                 if (size < 0) {
                     size = 0;
@@ -974,30 +983,37 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 return;
             }
 
+            //将msg 加入到Netty中的待写入数据缓冲队列ChannelOutboundBuffer中
             outboundBuffer.addMessage(msg, size, promise);
         }
 
         @Override
         public final void flush() {
+            // 确保flush动作一定是reactor线程执行的
             assertEventLoop();
-
+            // 获取channel的发送缓冲队列
             ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            //channel已关闭
             if (outboundBuffer == null) {
                 return;
             }
 
+            //将flushedEntry指针指向ChannelOutboundBuffer头结点，此时变为即将要flush进Socket的数据队列（此时还未真正的写入socket发送队列）
             outboundBuffer.addFlush();
+            //将待写数据写进Socket发送队列
             flush0();
         }
 
         @SuppressWarnings("deprecation")
         protected void flush0() {
+            //正在进行flush操作，则直接返回
             if (inFlush0) {
                 // Avoid re-entrance
                 return;
             }
 
             final ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            // 如果 channel 已经关闭了或者对应写缓冲区中没有任何数据，那么就停止发送流程，直接 return。
             if (outboundBuffer == null || outboundBuffer.isEmpty()) {
                 return;
             }
@@ -1005,14 +1021,25 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             inFlush0 = true;
 
             // Mark all pending write requests as failure if the channel is inactive.
+            // 如果当前channel处于非活跃状态，则需要调用 outboundBuffer#failFlushed 通知 ChannelOutboundBuffer 中所有待发送操作对应的
+            // channelPromise 向用户线程报告发送失败。并将待发送数据 Entry 对象从 ChannelOutboundBuffer 中删除，并释放待发送数据空间，回收 Entry 对象实例。
             if (!isActive()) {
                 try {
                     // Check if we need to generate the exception at all.
+                    // outboundBuffer 不是空的，说明 outboundBuffer 中有待发送的数据
                     if (!outboundBuffer.isEmpty()) {
+                        // !isActive() && isOpen()：说明当前 channel 处于 disConnected 状态，这时通知给用户 channelPromise
+                        // 的异常类型为 NotYetConnectedException ,并释放所有待发送数据占用的堆外内存，如果此时内存占用量低于低水位线，
+                        // 则设置 channel 为可写状态，并触发 channelWritabilityChanged 事件。
+                        // 说明：当 channel 处于 disConnected 状态时，用户可以进行 write 操作但不能进行 flush 操作。
                         if (isOpen()) {
+                            //当前channel处于disConnected状态  通知promise 写入失败 并触发channelWritabilityChanged事件
                             outboundBuffer.failFlushed(new NotYetConnectedException(), true);
                         } else {
                             // Do not trigger channelWritabilityChanged because the channel is closed already.
+                            //当前channel处于关闭状态 通知promise 写入失败 但不触发channelWritabilityChanged事件
+                            // !isActive() && !isOpen() ：说明当前 channel 处于关闭状态，这时通知给用户 channelPromise 的异常类型为
+                            // newClosedChannelException ，因为 channel 已经关闭，所以这里并不会触发 channelWritabilityChanged 事件。
                             outboundBuffer.failFlushed(newClosedChannelException(initialCloseCause, "flush0()"), false);
                         }
                     }
@@ -1023,6 +1050,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
 
             try {
+                // 当 channel 的上面这些异常状态校验通过之后，则调用 doWrite 方法将 ChannelOutboundBuffer 中的待发送数据写进底层 Socket 中
+                // NioSocketChannel的write动作 @see io.netty.channel.socket.nio.NioSocketChannel.doWrite
+                // NioServerSocketChannel的write动作 @see io.netty.channel.nio.AbstractNioMessageChannel.doWrite
                 doWrite(outboundBuffer);
             } catch (Throwable t) {
                 handleWriteError(t);

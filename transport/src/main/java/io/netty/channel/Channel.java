@@ -306,6 +306,7 @@ public interface Channel extends AttributeMap, ChannelOutboundInvoker, Comparabl
 
         /**
          * Returns the {@link ChannelOutboundBuffer} of the {@link Channel} where the pending write requests are stored.
+         * 获取channel上的发送缓冲区
          */
         ChannelOutboundBuffer outboundBuffer();
     }

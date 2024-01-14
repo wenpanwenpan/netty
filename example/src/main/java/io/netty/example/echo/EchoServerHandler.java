@@ -15,6 +15,8 @@
  */
 package io.netty.example.echo;
 
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -28,12 +30,29 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // 处理网络请求，比如解码,反序列化等操作
+        //此处的msg就是Netty在read loop中从NioSocketChannel中读取到的ByteBuffer
+        // write 就是将msg写入到 ChannelOutboundBuffer 缓冲区里即可
+        ChannelFuture future = ctx.write(msg);
+        // 将msg写入channel的ChannelOutboundBuffer缓冲区里（单向链表），并且将msg从ChannelOutboundBuffer缓冲区刷写到socket待发送区
+        ctx.writeAndFlush(msg);
+        // 向future注册回调，当msg被写入到socket的发送缓冲区时，netty会回调这个方法
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                Throwable cause = future.cause();
+                if (cause != null) {
+                    // 处理异常情况
+                } else {
+                    // 写入Socket成功后，Netty会通知到这里
+                }
+            }
+        });
         ctx.write(msg);
     }
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        // 本次OP_READ事件处理完毕
+        // 本次OP_READ事件处理完毕（应该是整个read-loop执行完毕后会传播这个事件，比如：read-loop读取了16次数据，或者socket中没有待读取的数据了）
         // 决定是否向客户端响应处理结果
         ctx.flush();
     }

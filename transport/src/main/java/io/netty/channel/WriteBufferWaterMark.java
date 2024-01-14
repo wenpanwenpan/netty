@@ -31,14 +31,18 @@ import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
  * {@code true} again.
  */
 public final class WriteBufferWaterMark {
-
+    // 这意味着每个 Channel 中的待发送数据如果超过 64 KB。Channel 的状态就会变为不可写状态。当内存占用量低于 32 KB时，Channel 的状态会再次变为可写状态。
+    // 默认的低水位线 32kb
     private static final int DEFAULT_LOW_WATER_MARK = 32 * 1024;
+    // 默认的高水位线 64kb
     private static final int DEFAULT_HIGH_WATER_MARK = 64 * 1024;
 
     public static final WriteBufferWaterMark DEFAULT =
             new WriteBufferWaterMark(DEFAULT_LOW_WATER_MARK, DEFAULT_HIGH_WATER_MARK, false);
 
+    // 低水位线
     private final int low;
+    // 高水位线
     private final int high;
 
     /**

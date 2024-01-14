@@ -369,6 +369,7 @@ public abstract class AbstractNioChannel extends AbstractChannel {
         @Override
         public final void forceFlush() {
             // directly call super.flush0() to force a flush now
+            // 可以看到这里就是直接调用了父类的flush0方法，将channel发送缓冲区（ChannelOutboundBuffer）中的待发送数据刷写到socket的发送缓冲区
             super.flush0();
         }
 

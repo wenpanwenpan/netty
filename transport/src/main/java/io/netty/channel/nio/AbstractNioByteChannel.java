@@ -46,6 +46,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             " (expected: " + StringUtil.simpleClassName(ByteBuf.class) + ", " +
             StringUtil.simpleClassName(FileRegion.class) + ')';
 
+    // 执行flush操作的task，将channel的write缓冲链表上的待发送数据entry刷写到socket的发送缓冲区
     private final Runnable flushTask = new Runnable() {
         @Override
         public void run() {
@@ -241,11 +242,13 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
     private int doWriteInternal(ChannelOutboundBuffer in, Object msg) throws Exception {
         if (msg instanceof ByteBuf) {
             ByteBuf buf = (ByteBuf) msg;
+            // 文件已经传输完毕
             if (!buf.isReadable()) {
                 in.remove();
                 return 0;
             }
 
+            //零拷贝的方式传输文件
             final int localFlushedAmount = doWriteBytes(buf);
             if (localFlushedAmount > 0) {
                 in.progress(localFlushedAmount);
@@ -261,6 +264,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
                 return 0;
             }
 
+            // 最终会在 doWriteFileRegion 方法中通过 FileChannel#transferTo 方法底层用到的系统调用为 sendFile 实现零拷贝网络文件的传输
             long localFlushedAmount = doWriteFileRegion(region);
             if (localFlushedAmount > 0) {
                 in.progress(localFlushedAmount);
@@ -273,6 +277,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             // Should not reach here.
             throw new Error();
         }
+        //走到这里表示 此时Socket已经写不进去了 退出writeLoop，注册OP_WRITE事件
         return WRITE_STATUS_SNDBUF_FULL;
     }
 
@@ -315,15 +320,20 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
     protected final void incompleteWrite(boolean setOpWrite) {
         // Did not write completely.
         if (setOpWrite) {
+            //这里处理还没写满16次 但是socket缓冲区已满写不进去的情况 注册write事件
+            // 什么时候socket可写了， epoll会通知reactor线程继续写
             setOpWrite();
         } else {
             // It is possible that we have set the write OP, woken up by NIO because the socket is writable, and then
             // use our write quantum. In this case we no longer want to set the write OP because the socket is still
             // writable (as far as we know). We will find out next time we attempt to write if the socket is writable
             // and set the write OP if necessary.
+            //这里处理的是socket缓冲区依然可写，但是写了16次还没写完，这时就不能在写了，reactor线程需要处理其他channel上的io事件
+            //因为此时socket是可写的，必须清除op_write事件，否则会一直不停地被通知
             clearOpWrite();
 
             // Schedule flush again later so other tasks can be picked up in the meantime
+            //如果本次writeLoop还没写完，则提交flushTask到reactor
             eventLoop().execute(flushTask);
         }
     }

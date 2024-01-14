@@ -50,6 +50,16 @@ import static java.lang.Math.min;
  * <li>{@link #getUserDefinedWritability(int)} and {@link #setUserDefinedWritability(int, boolean)}</li>
  * </ul>
  * </p>
+ * ChannelOutboundBuffer 其实是一个单链表结构的缓冲队列，链表中的节点类型为 Entry ，由于 ChannelOutboundBuffer 在 Netty 中的作用
+ * 就是缓存应用程序待发送的网络数据，所以 Entry 中封装的就是待写入 Socket 中的网络发送数据相关的信息，以及 ChannelHandlerContext#write
+ * 方法中返回给用户的 ChannelPromise 。这样可以在数据写入Socket之后异步通知应用程序。
+ *
+ * 此外 ChannelOutboundBuffer 中还封装了三个重要的指针：
+ * 1、unflushedEntry ：该指针指向 ChannelOutboundBuffer 中第一个待发送数据的 Entry。
+ * 2、tailEntry ：该指针指向 ChannelOutboundBuffer 中最后一个待发送数据的 Entry。通过 unflushedEntry 和 tailEntry 这两个指针，
+ * 我们可以很方便的定位到待发送数据的 Entry 范围。
+ * 3、flushedEntry ：当我们通过 flush 操作需要将 ChannelOutboundBuffer 中缓存的待发送数据发送到 Socket 中时，flushedEntry 指针
+ * 会指向 unflushedEntry 的位置，这样 flushedEntry 指针和 tailEntry 指针之间的 Entry 就是我们即将发送到 Socket 中的网络数据。
  */
 public final class ChannelOutboundBuffer {
     // Assuming a 64-bit JVM:
@@ -59,6 +69,7 @@ public final class ChannelOutboundBuffer {
     //  - 2 int fields
     //  - 1 boolean field
     //  - padding
+    //不考虑指针压缩的大小 entry对象在堆中占用的内存大小为96,如果开启指针压缩，entry对象在堆中占用的内存大小 会是64, Netty这里默认是 96 字节
     static final int CHANNEL_OUTBOUND_BUFFER_ENTRY_OVERHEAD =
             SystemPropertyUtil.getInt("io.netty.transport.outboundBufferEntrySizeOverhead", 96);
 
@@ -71,24 +82,34 @@ public final class ChannelOutboundBuffer {
         }
     };
 
+    // 持有对channel的引用
     private final Channel channel;
 
     // Entry(flushedEntry) --> ... Entry(unflushedEntry) --> ... Entry(tailEntry)
     //
     // The Entry that is the first in the linked-list structure that was flushed
+    // 当我们通过 flush 操作需要将 ChannelOutboundBuffer 中缓存的待发送数据发送到 Socket 中时，flushedEntry 指针
+    // 会指向 unflushedEntry 的位置，这样 flushedEntry 指针和 tailEntry 指针之间的 Entry 就是我们即将发送到 Socket 中的网络数据
     private Entry flushedEntry;
     // The Entry which is the first unflushed in the linked-list structure
+    // 该指针指向 ChannelOutboundBuffer 中第一个待发送数据的 Entry
     private Entry unflushedEntry;
     // The Entry which represents the tail of the buffer
+    // 该指针指向 ChannelOutboundBuffer 中最后一个待发送数据的 Entry。通过 unflushedEntry 和 tailEntry 这两个指针，
+    // 我们可以很方便的定位到待发送数据的 Entry 范围
     private Entry tailEntry;
     // The number of flushed entries that are not written yet
     private int flushed;
 
+    // 本次write loop中需要发送的 JDK ByteBuffer个数
     private int nioBufferCount;
     private long nioBufferSize;
 
     private boolean inFail;
 
+    // ChannelOutboundBuffer中占用内存总数据量水位线指针
+    // volatile 关键字在 Java 内存模型中只能保证变量的可见性，以及禁止指令重排序。但无法保证多线程更新的原子性，
+    // 这里我们可以通过AtomicLongFieldUpdater 来帮助 totalPendingSize 字段实现原子性的更新。
     private static final AtomicLongFieldUpdater<ChannelOutboundBuffer> TOTAL_PENDING_SIZE_UPDATER =
             AtomicLongFieldUpdater.newUpdater(ChannelOutboundBuffer.class, "totalPendingSize");
 
@@ -99,6 +120,7 @@ public final class ChannelOutboundBuffer {
             AtomicIntegerFieldUpdater.newUpdater(ChannelOutboundBuffer.class, "unwritable");
 
     @SuppressWarnings("UnusedDeclaration")
+    // 0表示channel可写，1表示channel不可写
     private volatile int unwritable;
 
     private volatile Runnable fireChannelWritabilityChangedTask;
@@ -142,19 +164,27 @@ public final class ChannelOutboundBuffer {
         if (entry != null) {
             if (flushedEntry == null) {
                 // there is no flushedEntry yet, so start with the entry
+                // 将 flushedEntry 指针指向unflushedEntry，表示从 unflushedEntry 开始刷写Entry到socket发送队列
                 flushedEntry = entry;
             }
+            // 这里do-while想表达的是从 unflushedEntry 节点开始将 ChannelOutboundBuffer 上已取消的 entry去除掉，并释放已占用的内存
             do {
                 flushed ++;
+                // 如果当前entry对应的write操作被用户取消，则释放msg，并降低channelOutboundBuffer水位线
+                // 在 flush 发送数据流程开始时，数据的发送流程就不能被取消了，在这之前我们都是可以通过 ChannelPromise 取消数据发送流程的。
+                // 所以这里需要对 ChannelOutboundBuffer 中所有 Entry 节点包裹的 ChannelPromise 设置为不可取消状态。
+                // 如果这里的 setUncancellable() 方法返回 false 则说明在这之前用户已经将 ChannelPromise 取消掉了，
+                // 接下来就需要调用 entry.cancel() 方法来释放为待发送数据 msg 分配的堆外内存
                 if (!entry.promise.setUncancellable()) {
                     // Was cancelled so make sure we free up memory and notify about the freed bytes
                     int pending = entry.cancel();
+                    // 降低 ChannelOutboundBuffer 中总共待发送数据的水位线
                     decrementPendingOutboundBytes(pending, false, true);
                 }
                 entry = entry.next;
             } while (entry != null);
 
-            // All flushed so reset unflushedEntry
+            // All flushed so reset unflushedEntry 所有数据都flush了，所以将 unflushedEntry 置为空
             unflushedEntry = null;
         }
     }
@@ -162,6 +192,9 @@ public final class ChannelOutboundBuffer {
     /**
      * Increment the pending bytes which will be written at some point.
      * This method is thread-safe!
+     * 在将 Entry 对象添加进 ChannelOutboundBuffer 之后，就需要更新用于记录当前 ChannelOutboundBuffer 中关于待发送数据所占内存总量的水位线指示
+     * 如果更新后的水位线超过了 Netty 指定的高水位线 DEFAULT_HIGH_WATER_MARK = 64 * 1024，则需要将当前 Channel 的状态设置为不可写，
+     * 并在 pipeline 中传播 ChannelWritabilityChanged 事件，注意该事件是一个 inbound 事件
      */
     void incrementPendingOutboundBytes(long size) {
         incrementPendingOutboundBytes(size, true);
@@ -172,7 +205,9 @@ public final class ChannelOutboundBuffer {
             return;
         }
 
+        //更新总共待写入数据的大小
         long newWriteBufferSize = TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, size);
+        // 更新ChannelOutboundBuffer中待发送数据占用内存总量后水位线超过了netty指定的高水位线，则将channel设置为不可写，并在pipeline中传播 ChannelWritabilityChanged 事件
         if (newWriteBufferSize > channel.config().getWriteBufferHighWaterMark()) {
             setUnwritable(invokeLater);
         }
@@ -190,8 +225,9 @@ public final class ChannelOutboundBuffer {
         if (size == 0) {
             return;
         }
-
+        // 降低总待发送数据水位线
         long newWriteBufferSize = TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, -size);
+        // 当更新后的水位线低于低水位线 DEFAULT_LOW_WATER_MARK = 32 * 1024 时，就将当前 channel 设置为可写状态
         if (notifyWritability && newWriteBufferSize < channel.config().getWriteBufferLowWaterMark()) {
             setWritable(invokeLater);
         }
@@ -291,6 +327,7 @@ public final class ChannelOutboundBuffer {
     private boolean remove0(Throwable cause, boolean notifyWritability) {
         Entry e = flushedEntry;
         if (e == null) {
+            //清空当前reactor线程缓存的所有待发送数据
             clearNioBuffers();
             return false;
         }
@@ -299,17 +336,21 @@ public final class ChannelOutboundBuffer {
         ChannelPromise promise = e.promise;
         int size = e.pendingSize;
 
+        //从channelOutboundBuffer中删除该Entry节点
         removeEntry(e);
 
         if (!e.cancelled) {
             // only release message, fail and decrement if it was not canceled before.
+            //释放msg所占用的内存空间
             ReferenceCountUtil.safeRelease(msg);
 
+            //编辑promise发送失败，并通知相应的Lisener
             safeFail(promise, cause);
+            //由于msg得到释放，所以需要降低channelOutboundBuffer中的内存占用水位线，并根据notifyWritability决定是否触发ChannelWritabilityChanged事件
             decrementPendingOutboundBytes(size, false, notifyWritability);
         }
 
-        // recycle the entry
+        // recycle the entry 回收Entry实例对象 到对象池
         e.recycle();
 
         return true;
@@ -394,6 +435,8 @@ public final class ChannelOutboundBuffer {
      * {@link AbstractChannel#doWrite(ChannelOutboundBuffer)}.
      * Refer to {@link NioSocketChannel#doWrite(ChannelOutboundBuffer)} for an example.
      * </p>
+     * 由于最终 Netty 会调用 JDK NIO 的 SocketChannel 发送数据，所以这里需要首先将当前 Channel 中的写缓冲队列 ChannelOutboundBuffer 里存储的
+     * DirectByteBuffer（ Netty 中的 ByteBuffer 实现）转换成 JDK NIO 的 ByteBuffer 类型。最终将转换后的待发送数据存储在 ByteBuffer[] nioBuffers 数组中
      * @param maxCount The maximum amount of buffers that will be added to the return value.
      * @param maxBytes A hint toward the maximum number of bytes to include as part of the return value. Note that this
      *                 value maybe exceeded because we make a best effort to include at least 1 {@link ByteBuffer}
@@ -526,6 +569,7 @@ public final class ChannelOutboundBuffer {
      * not exceed the write watermark of the {@link Channel} and
      * no {@linkplain #setUserDefinedWritability(int, boolean) user-defined writability flag} has been set to
      * {@code false}.
+     * 该ChannelOutboundBuffer对应的channel 是否可以写
      */
     public boolean isWritable() {
         return unwritable == 0;
@@ -585,12 +629,16 @@ public final class ChannelOutboundBuffer {
         return 1 << index;
     }
 
+    /**设置channel可写*/
     private void setWritable(boolean invokeLater) {
+        // 可以看到这里通过CAS的方式来更新
         for (;;) {
             final int oldValue = unwritable;
             final int newValue = oldValue & ~1;
             if (UNWRITABLE_UPDATER.compareAndSet(this, oldValue, newValue)) {
+                // 如果oldValue != 0 && newValue == 0说明更新之前channel是不可写的，更新之后channel可写了
                 if (oldValue != 0 && newValue == 0) {
+                    // 在pipeline上传播channel可写事件
                     fireChannelWritabilityChanged(invokeLater);
                 }
                 break;
@@ -600,10 +648,14 @@ public final class ChannelOutboundBuffer {
 
     private void setUnwritable(boolean invokeLater) {
         for (;;) {
+            // 获取channel是否可写的旧值
             final int oldValue = unwritable;
             final int newValue = oldValue | 1;
+            // 原子更新
             if (UNWRITABLE_UPDATER.compareAndSet(this, oldValue, newValue)) {
+                // 如果旧值是0，则说明之前channel是可写的，新值是不可写的
                 if (oldValue == 0) {
+                    // 在pipeline上传播channel不可写事件
                     fireChannelWritabilityChanged(invokeLater);
                 }
                 break;
@@ -613,6 +665,7 @@ public final class ChannelOutboundBuffer {
 
     private void fireChannelWritabilityChanged(boolean invokeLater) {
         final ChannelPipeline pipeline = channel.pipeline();
+        // 如果需要稍后执行，则将channel不可写事件包装为一个task提交到channel的reactor线程任务队列
         if (invokeLater) {
             Runnable task = fireChannelWritabilityChangedTask;
             if (task == null) {
@@ -625,6 +678,7 @@ public final class ChannelOutboundBuffer {
             }
             channel.eventLoop().execute(task);
         } else {
+            // 立即在pipeline上传播channel不可写事件
             pipeline.fireChannelWritabilityChanged();
         }
     }
@@ -644,6 +698,11 @@ public final class ChannelOutboundBuffer {
         return flushed == 0;
     }
 
+    /**
+     * 该方法用于在 Netty 在发送数据的时候，如果发现当前 channel 处于非活跃状态，则将 ChannelOutboundBuffer 中 flushedEntry 与tailEntry
+     * 之间的 Entry 对象节点全部删除，并释放发送数据占用的内存空间，同时回收 Entry 对象实例。
+     * @author wenpan 2024/1/14 11:59 上午
+     */
     void failFlushed(Throwable cause, boolean notify) {
         // Make sure that this method does not reenter.  A listener added to the current promise can be notified by the
         // current thread in the tryFailure() call of the loop below, and the listener can trigger another fail() call
@@ -801,8 +860,8 @@ public final class ChannelOutboundBuffer {
     static final class Entry {
 
         // Entry对象池的引用，可以看到这是一个静态的final的变量
-        // 匿名实现 ObjectCreator接口来定义对象创建的行为方法。
-        // ObjectPool#newPool 创建用于管理Entry对象的对象池
+        // 匿名实现 ObjectCreator接口来定义对象创建的行为方法。ObjectPool#newPool 创建用于管理Entry对象的对象池
+        //静态变量引用类型地址 这个是在Klass Point(类型指针)中定义 8字节（开启指针压缩 为4字节）
         private static final ObjectPool<Entry> RECYCLER = ObjectPool.newPool(new ObjectCreator<Entry>() {
             // 创建池化对象
             @Override
@@ -813,19 +872,33 @@ public final class ChannelOutboundBuffer {
             }
         });
 
-        //recyclerHandle用于回收对象
+        //recyclerHandle用于回收对象(默认实现类型为 DefaultHandle ，用于数据发送完毕后，对象池回收 Entry 对象。由对象池 RECYCLER 在创建 Entry 对象的时候传递进来)
         private final Handle<Entry> handle;
+        // ChannelOutboundBuffer 是一个单链表的结构，这里的 next 指针用于指向当前 Entry 节点的后继节点。
         Entry next;
+        //应用程序待发送的网络数据，这里 msg 的类型为 DirectByteBuffer 或者 FileRegion（用于通过零拷贝的方式网络传输文件）
         Object msg;
+        // 这里的 ByteBuffer 类型为 JDK NIO 原生的 ByteBuffer 类型，因为 Netty 最终发送数据是通过 JDK NIO 底层的 SocketChannel 进行发送，
+        // 所以需要将 Netty 中实现的 ByteBuffer 类型转换为 JDK NIO ByteBuffer 类型。应用程序发送的 ByteBuffer 可能是一个也可能是多个，
+        // 如果发送多个就用 ByteBuffer[] bufs 封装在 Entry 对象中，如果是一个就用 ByteBuffer buf 封装
         ByteBuffer[] bufs;
         ByteBuffer buf;
+        // ChannelHandlerContext#write 异步写操作返回的 ChannelFuture。当 Netty 将待发送数据写入到 Socket 中时会通过这个 ChannelPromise 通知应用程序发送结果
         ChannelPromise promise;
+        //表示当前的一个发送进度，已经发送了多少数据。
         long progress;
+        // Entry中总共需要发送多少数据。注意：这个字段并不包含 Entry 对象的内存占用大小。只是表示待发送网络数据的大小
         long total;
+        // 表示待发送数据的内存占用总量。待发送数据在内存中的占用量分为两部分：
+        // 1、Entry对象中所封装的待发送网络数据大小。
+        // 2、Entry对象本身在内存中的占用量。
         int pendingSize;
+        // 表示待发送数据 msg 中一共包含了多少个 ByteBuffer 需要发送
         int count = -1;
+        //应用程序调用的 write 操作是否被取消。
         boolean cancelled;
 
+        //Entry对象只能通过对象池获取，不可外部自行创建
         private Entry(Handle<Entry> handle) {
             this.handle = handle;
         }
@@ -837,6 +910,7 @@ public final class ChannelOutboundBuffer {
             Entry entry = RECYCLER.get();
             // 初始化池化对象相关属性
             entry.msg = msg;
+            //待发数据数据大小 + entry对象大小
             entry.pendingSize = size + CHANNEL_OUTBOUND_BUFFER_ENTRY_OVERHEAD;
             entry.total = total;
             entry.promise = promise;
@@ -844,14 +918,18 @@ public final class ChannelOutboundBuffer {
         }
 
         int cancel() {
+            // 如果没有被取消才进行entry的取消动作
             if (!cancelled) {
+                // 设置该entry已经被取消
                 cancelled = true;
+                // 待发送数据的内存占用总量(待发送数据大小 + entry本身大小)
                 int pSize = pendingSize;
 
                 // release message and replace with an empty buffer
                 ReferenceCountUtil.safeRelease(msg);
                 msg = Unpooled.EMPTY_BUFFER;
 
+                // 将entry相关属性置为初始状态
                 pendingSize = 0;
                 total = 0;
                 progress = 0;

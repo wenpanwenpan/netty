@@ -58,6 +58,7 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         }
     };
 
+    // 原子更新estimatorHandle字段
     private static final AtomicReferenceFieldUpdater<DefaultChannelPipeline, MessageSizeEstimator.Handle> ESTIMATOR =
             AtomicReferenceFieldUpdater.newUpdater(
                     DefaultChannelPipeline.class, MessageSizeEstimator.Handle.class, "estimatorHandle");
@@ -71,6 +72,9 @@ public class DefaultChannelPipeline implements ChannelPipeline {
     private final boolean touch = ResourceLeakDetector.isEnabled();
 
     private Map<EventExecutorGroup, EventExecutor> childExecutors;
+    // 计算要发送msg大小的handler，在 pipeline 中会有一个 estimatorHandle 专门用来计算待发送 ByteBuffer 的大小。
+    // 这个 estimatorHandle 会在 pipeline 对应的 Channel 中的配置类创建的时候被初始化。@see io.netty.channel.DefaultChannelConfig.msgSizeEstimator
+    // 默认实现是：DefaultMessageSizeEstimator里的 HandleImpl
     private volatile MessageSizeEstimator.Handle estimatorHandle;
     private boolean firstRegistration = true;
 
@@ -104,10 +108,13 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         tail.prev = head;
     }
 
+    // 获取用于计算要发送msg大小的handler
     final MessageSizeEstimator.Handle estimatorHandle() {
         MessageSizeEstimator.Handle handle = estimatorHandle;
         if (handle == null) {
+            // 创建一个handle
             handle = channel.config().getMessageSizeEstimator().newHandle();
+            // 放入到原子更新器里
             if (!ESTIMATOR.compareAndSet(this, null, handle)) {
                 handle = estimatorHandle;
             }
@@ -1314,14 +1321,22 @@ public class DefaultChannelPipeline implements ChannelPipeline {
         }
     }
 
+    /**
+     * channel pipeline的头节点
+     * @author wenpan 2024/1/14 10:28 上午
+     */
     final class HeadContext extends AbstractChannelHandlerContext
             implements ChannelOutboundHandler, ChannelInboundHandler {
 
+        // HeadContext 中持有对channel unsafe对象的引用，用于执行channel的底层操作
         private final Unsafe unsafe;
 
         HeadContext(DefaultChannelPipeline pipeline) {
+            // 可以看到这里 channelHandler（HeadContext）的executor传的是null，表示后续该handler的执行线程用的是reactor线程
             super(pipeline, null, HEAD_NAME, HeadContext.class);
+            // 持有对channel unsafe对象的引用，用于执行channel的底层操作
             unsafe = pipeline.channel().unsafe();
+            // 设置channelHandler的状态为 ADD_COMPLETE
             setAddComplete();
         }
 
@@ -1378,11 +1393,13 @@ public class DefaultChannelPipeline implements ChannelPipeline {
 
         @Override
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+            // 发送数据最终都会调用到HeadContext的write方法来进行发送
             unsafe.write(msg, promise);
         }
 
         @Override
         public void flush(ChannelHandlerContext ctx) {
+            // 使用channel的unsafe对象执行flush操作，@see io.netty.channel.AbstractChannel.AbstractUnsafe.flush
             unsafe.flush();
         }
 

@@ -27,20 +27,24 @@ import io.netty.buffer.ByteBufHolder;
 public final class DefaultMessageSizeEstimator implements MessageSizeEstimator {
 
     private static final class HandleImpl implements Handle {
+        // 默认为8
         private final int unknownSize;
 
         private HandleImpl(int unknownSize) {
             this.unknownSize = unknownSize;
         }
 
+        // 计算待发送的msg的大小
         @Override
         public int size(Object msg) {
             if (msg instanceof ByteBuf) {
+                // ByteBuffer 的大小即为 Buffer 中未读取的字节数 writerIndex - readerIndex
                 return ((ByteBuf) msg).readableBytes();
             }
             if (msg instanceof ByteBufHolder) {
                 return ((ByteBufHolder) msg).content().readableBytes();
             }
+            // 文件
             if (msg instanceof FileRegion) {
                 return 0;
             }
@@ -62,6 +66,7 @@ public final class DefaultMessageSizeEstimator implements MessageSizeEstimator {
      */
     public DefaultMessageSizeEstimator(int unknownSize) {
         checkPositiveOrZero(unknownSize, "unknownSize");
+        // 默认handle是HandleImpl
         handle = new HandleImpl(unknownSize);
     }
 

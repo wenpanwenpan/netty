@@ -132,6 +132,11 @@ public class ChannelInboundHandlerAdapter extends ChannelHandlerAdapter implemen
     /**
      * Calls {@link ChannelHandlerContext#fireExceptionCaught(Throwable)} to forward
      * to the next {@link ChannelHandler} in the {@link ChannelPipeline}.
+     * 1、当异步事件在 pipeline 传播的过程中发生异常时，异步事件就会停止在 pipeline 中传播。所以我们在日常开发中，需要对写操作异常情况进行处理。
+     * 其中 inbound 类异步事件发生异常时，会触发exceptionCaught事件传播。exceptionCaught 事件本身也是一种 inbound 事件，
+     * 传播方向会从当前发生异常的 ChannelHandler 开始一直向后传播直到 TailContext。
+     * 2、而 outbound 类异步事件发生异常时，则不会触发exceptionCaught事件传播。一般只是通知相关 ChannelFuture。
+     * 但如果是 flush 事件在传播过程中发生异常，则会触发当前发生异常的 ChannelHandler 中 exceptionCaught 事件回调。
      *
      * Sub-classes may override this method to change behavior.
      */
