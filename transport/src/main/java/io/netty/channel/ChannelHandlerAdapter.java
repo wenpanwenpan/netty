@@ -89,6 +89,7 @@ public abstract class ChannelHandlerAdapter implements ChannelHandler {
     @Override
     @Deprecated
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        // 默认是继续向下一个context传播
         ctx.fireExceptionCaught(cause);
     }
 }

@@ -291,13 +291,14 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
     @Override
     public Channel read() {
-        //触发read事件
+        // 直接调用了pipeline的read方法，从尾节点开始向头节点传播read事件
         pipeline.read();
         return this;
     }
 
     @Override
     public ChannelFuture write(Object msg) {
+        // 直接调用了pipeline的write方法，从尾节点开始向头节点传播write事件
         return pipeline.write(msg);
     }
 
@@ -643,7 +644,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 invokeLater(new Runnable() {
                     @Override
                     public void run() {
-                        //pipeline中触发channelActive事件
+                        //pipeline中触发channelActive事件（比如：NIOServerSocketChannel就会在该事件中触发向reactor中的selector注册OP_ACCEPT事件）
+                        // ChannelActive在netty中被定义为inbound事件，并且是通过pipeline触发的，所以是从pipeline的头节点向尾节点传递的
                         pipeline.fireChannelActive();
                     }
                 });

@@ -32,9 +32,30 @@ import java.security.PrivilegedExceptionAction;
 import java.util.Map;
 import java.util.WeakHashMap;
 
+/**
+ * <p>
+ * netty 会将其支持的所有异步事件用掩码来表示，定义在 ChannelHandlerMask 类中， netty 框架通过这些事件掩码可以很方便的知道用户自定义的 ChannelHandler
+ * 是属于什么类型的（ChannelInboundHandler or ChannelOutboundHandler ）。
+ *
+ * 除此之外，inbound 类事件如此之多，用户也并不是对所有的 inbound 类事件感兴趣，用户可以在自定义的 ChannelInboundHandler
+ * 中覆盖自己感兴趣的 inbound 事件回调，从而达到针对特定 inbound 事件的监听。
+ *
+ * 这些用户感兴趣的 inbound 事件集合同样也会用掩码的形式保存在自定义 ChannelHandler 对应的 ChannelHandlerContext 中，这样当特定 inbound 事件在
+ * pipeline 中开始传播的时候，netty 可以根据对应 ChannelHandlerContext 中保存的 inbound 事件集合掩码来判断，用户自定义的 ChannelHandler 是否对该
+ * inbound 事件感兴趣，从而决定是否执行用户自定义 ChannelHandler 中的相应回调方法或者跳过对该 inbound 事件不感兴趣的 ChannelHandler 继续向后传播。
+ * </p>
+ * <p>
+ *     从以上描述中，我们也可以窥探出，Netty 引入 ChannelHandlerContext 来封装 ChannelHandler 的原因，在代码设计上还是遵循单一职责的原则，
+ *     ChannelHandler 是用户接触最频繁的一个 netty 组件，netty 希望用户能够把全部注意力放在最核心的 IO 处理上，用户只需要关心自己对哪些异步事件感兴趣
+ *     并考虑相应的处理逻辑即可，而并不需要关心异步事件在 pipeline 中如何传递，如何选择具有执行条件的 ChannelHandler 去执行或者跳过。这些切面性质的逻辑，
+ *     netty 将它们作为上下文信息全部封装在 ChannelHandlerContext 中由netty框架本身负责处理。
+ * </p>
+ * @author wenpan 2024/1/14 6:04 下午
+ */
 final class ChannelHandlerMask {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(ChannelHandlerMask.class);
 
+    // ========================== inbound事件相关掩码 ==========================
     // Using to mask which methods must be called for a ChannelHandler.
     static final int MASK_EXCEPTION_CAUGHT = 1;
     // channelRegistered 方法掩码（channel注册到reactor上）
@@ -53,6 +74,8 @@ final class ChannelHandlerMask {
     static final int MASK_USER_EVENT_TRIGGERED = 1 << 7;
     // channelWritabilityChanged 方法
     static final int MASK_CHANNEL_WRITABILITY_CHANGED = 1 << 8;
+
+    // ========================== outbound事件相关掩码 ==========================
     // bind方法
     static final int MASK_BIND = 1 << 9;
     // connect方法

@@ -68,6 +68,13 @@ public interface ChannelInboundHandler extends ChannelHandler {
 
     /**
      * Gets called if a {@link Throwable} was thrown.
+     * inbound 类事件在 pipeline 中传播的过程中，如果在相应事件回调函数执行的过程中发生异常，那么就会触发对应 ChannelHandler 中的 exceptionCaught 事件回调。
+     * 为什么要单独强调在 inbound 事件传播的过程中发生异常，才会回调 exceptionCaught 呢 ?
+     * 1、因为 inbound 事件一般都是由 netty 内核触发传播的，而 outbound 事件一般都是由用户选择触发的，比如用户在处理完业务逻辑触发的 write 事件或者 flush 事件。
+     * 2、而在用户触发 outbound 事件后，一般都会得到一个 ChannelPromise 。用户可以向 ChannelPromise 添加各种 listener 。当 outbound 事件在传播的过程中发生异常时，
+     * netty 会通知用户持有的这个 ChannelPromise ，但不会触发 exceptionCaught 的回调。
+     * 3、而 outbound 事件中只有 flush 事件的传播是个例外，当 flush 事件在 pipeline 传播的过程中发生异常时，会触发对应异常 ChannelHandler
+     * 的 exceptionCaught 事件回调。因为 flush 方法的签名中不会给用户返回 ChannelPromise
      */
     @Override
     @SuppressWarnings("deprecation")

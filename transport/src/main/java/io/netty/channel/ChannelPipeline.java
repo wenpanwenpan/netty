@@ -269,6 +269,7 @@ public interface ChannelPipeline
 
     /**
      * Appends a {@link ChannelHandler} at the last position of this pipeline.
+     * 为channelHandler指定executor和name
      *
      * @param group    the {@link EventExecutorGroup} which will be used to execute the {@link ChannelHandler}
      *                 methods
@@ -374,7 +375,7 @@ public interface ChannelPipeline
 
     /**
      * Inserts {@link ChannelHandler}s at the last position of this pipeline.
-     *
+     * 批量添加多个handler
      * @param handlers  the handlers to insert last
      *
      */
@@ -382,6 +383,7 @@ public interface ChannelPipeline
 
     /**
      * Inserts {@link ChannelHandler}s at the last position of this pipeline.
+     * 指定channelHandler的executor，由指定的executor执行channelHandler中的回调方法
      *
      * @param group     the {@link EventExecutorGroup} which will be used to execute the {@link ChannelHandler}s
      *                  methods.

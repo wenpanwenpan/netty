@@ -71,26 +71,34 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     /**
      * {@link ChannelHandler#handlerAdded(ChannelHandlerContext)} is about to be called.
+     * channelHandlerContext 等待添加
      */
     private static final int ADD_PENDING = 1;
     /**
      * {@link ChannelHandler#handlerAdded(ChannelHandlerContext)} was called.
+     * channelHandlerContext已经完成添加到pipeline中，只有 ADD_COMPLETE 状态的 ChannelHandler 才能响应 pipeline 中传播的事件
      */
     private static final int ADD_COMPLETE = 2;
     /**
      * {@link ChannelHandler#handlerRemoved(ChannelHandlerContext)} was called.
+     * channelHandlerContext 已经从pipeline中成功移除
      */
     private static final int REMOVE_COMPLETE = 3;
     /**
      * Neither {@link ChannelHandler#handlerAdded(ChannelHandlerContext)}
      * nor {@link ChannelHandler#handlerRemoved(ChannelHandlerContext)} was called.
+     * channelHandlerContext的初始状态
      */
     private static final int INIT = 0;
 
     // 该context所属的pipeline
     private final DefaultChannelPipeline pipeline;
+    //对应channelHandler的名称
     private final String name;
+    //false表示 当channelHandler的状态为ADD_PENDING的时候，也可以响应pipeline中的事件
+    //true表示只有在channelHandler的状态为ADD_COMPLETE的时候才能响应pipeline中的事件
     private final boolean ordered;
+    //channelHandlerContext中保存channelHandler的执行条件掩码（是什么类型的ChannelHandler,对什么事件感兴趣）
     // 在 ChannelHandler 被添加进 pipeline 的时候，Netty 会根据当前 ChannelHandler 的类型以及其覆盖实现的异步事件回调方法，
     // 通过 | 运算 向 ChannelHandlerContext#executionMask 字段添加该 ChannelHandler 的执行资格
     private final int executionMask;
@@ -105,6 +113,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     // There is no need to make this volatile as at worse it will just create a few more instances then needed.
     private Tasks invokeTasks;
 
+    // handler在pipeline的状态（也可以说是context的状态）
     private volatile int handlerState = INIT;
 
     /**
@@ -229,12 +238,16 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
         return this;
     }
 
+    /**
+     * 执行context上的 channelActive 方法
+     */
     static void invokeChannelActive(final AbstractChannelHandlerContext next) {
         EventExecutor executor = next.executor();
         // 如果当前线程是reactor线程，则直接执行，否则则封装成一个任务提交到reactor线程队列等待reactor线程执行
         if (executor.inEventLoop()) {
             next.invokeChannelActive();
         } else {
+            // 保证方法一定是在handler指定的线程中被执行的（netty是一个全异步化框架体现）
             executor.execute(new Runnable() {
                 @Override
                 public void run() {
@@ -245,10 +258,13 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     }
 
     private void invokeChannelActive() {
+        // 如果handler已经正常的添加到pipeline上了
         if (invokeHandler()) {
             try {
+                // 执行该handler的channelActive方法
                 ((ChannelInboundHandler) handler()).channelActive(this);
             } catch (Throwable t) {
+                // 有任何异常，则回调handler的exceptionCaught方法
                 invokeExceptionCaught(t);
             }
         } else {
@@ -962,6 +978,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
         AbstractChannelHandlerContext ctx = this;
         EventExecutor currentExecutor = executor();
         do {
+            // 向后查找下一个ChannelHandler
             ctx = ctx.next;
         } while (skipContext(ctx, currentExecutor, mask, MASK_ONLY_INBOUND));
         return ctx;
@@ -981,7 +998,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
         do {
             //向前查找获取前一个ChannelHandler
             ctx = ctx.prev;
-            //判断前一个ChannelHandler是否具有响应Write事件的资格
+            //判断前一个ChannelHandler是否具有响应 mask 事件的资格
         } while (skipContext(ctx, currentExecutor, mask, MASK_ONLY_OUTBOUND));
         return ctx;
     }
@@ -1032,13 +1049,21 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     }
 
     final void setAddPending() {
+        // 通过原子更新器将状态从init更新为add_pending
         boolean updated = HANDLER_STATE_UPDATER.compareAndSet(this, INIT, ADD_PENDING);
         assert updated; // This should always be true as it MUST be called before setAddComplete() or setRemoved().
     }
 
+    /**
+     * 调用handler的handlerAdd方法，这里需要注意的是需要在回调 handlerAdded 方法之前将 ChannelHandler 的状态提前设置为 ADD_COMPLETE 。
+     * 因为用户可能在 ChannelHandler 中的 handerAdded 回调中触发一些事件，而如果此时 ChannelHandler 的状态不是 ADD_COMPLETE 的话，
+     * 就会停止对事件的响应，从而错过事件的处理。
+     * @author wenpan 2024/1/14 10:35 下午
+     */
     final void callHandlerAdded() throws Exception {
         // We must call setAddComplete before calling handlerAdded. Otherwise if the handlerAdded method generates
         // any pipeline events ctx.handler() will miss them because the state will not allow it.
+        // 将handler的状态先设置为complete
         if (setAddComplete()) {
             // 调用pipeline上的handler的handlerAdded方法，向pipeline上添加handler，一般多用于 ChannelInitializer
             handler().handlerAdded(this);
@@ -1066,6 +1091,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
      * but not called {@link ChannelHandler#handlerAdded(ChannelHandlerContext)}.
      */
     private boolean invokeHandler() {
+        // 这里是一个优化点，netty 用一个局部变量保存 handlerState，目的是减少 volatile 变量 handlerState 的读取次数
         // Store in local variable to reduce volatile reads.
         int handlerState = this.handlerState;
         // 只有触发了 handlerAdded 回调，ChannelHandler 的状态才能变成 ADD_COMPLETE

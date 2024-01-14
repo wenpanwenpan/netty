@@ -146,6 +146,7 @@ public class ChannelInboundHandlerAdapter extends ChannelHandlerAdapter implemen
     @SuppressWarnings("deprecation")
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
             throws Exception {
+        // 当然用户可以选择在 exceptionCaught 事件回调中是否执行 ctx.fireExceptionCaught(cause) 从而决定是否将 exceptionCaught 事件继续向后传播
         ctx.fireExceptionCaught(cause);
     }
 }

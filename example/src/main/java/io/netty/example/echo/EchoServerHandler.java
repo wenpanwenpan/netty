@@ -20,6 +20,7 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.nio.AbstractNioMessageChannel;
 
 /**
  * Handler implementation for the echo server.
@@ -27,6 +28,12 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 @Sharable
 public class EchoServerHandler extends ChannelInboundHandlerAdapter {
 
+    /**
+     * read-loop时，每再socket的接收缓冲区里读取一次数据就触发一次该方法，和下面的channelReadComplete类比，
+     * channelReadComplete是整个read-loop读取完毕以后才会触发一次
+     * @see AbstractNioMessageChannel.NioMessageUnsafe#read()
+     * @author wenpan 2024/1/14 4:59 下午
+     */
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // 处理网络请求，比如解码,反序列化等操作
@@ -34,7 +41,10 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
         // write 就是将msg写入到 ChannelOutboundBuffer 缓冲区里即可
         ChannelFuture future = ctx.write(msg);
         // 将msg写入channel的ChannelOutboundBuffer缓冲区里（单向链表），并且将msg从ChannelOutboundBuffer缓冲区刷写到socket待发送区
-        ctx.writeAndFlush(msg);
+//        ctx.writeAndFlush(msg);
+
+        // 从tail节点开始向后传播出站事件（write是出站事件）
+        ctx.channel().write(msg);
         // 向future注册回调，当msg被写入到socket的发送缓冲区时，netty会回调这个方法
         future.addListener(new ChannelFutureListener() {
             @Override
