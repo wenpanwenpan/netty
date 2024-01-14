@@ -97,6 +97,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     // Will be set to null if no child executor should be used, otherwise it will be set to the
     // child executor.
+    // 用于执行context上事件和方法的线程池，netty是一个全异步化框架，每个节点都支持自定义线程池来执行
     final EventExecutor executor;
     private ChannelFuture succeededFuture;
 
@@ -142,6 +143,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
 
     @Override
     public EventExecutor executor() {
+        // 如果该handlerContext没有自己指定executor，则返回reactor线程
         if (executor == null) {
             return channel().eventLoop();
         } else {
@@ -955,6 +957,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
         return false;
     }
 
+    // 在pipeline上向后查找下一个合适的入站handler
     private AbstractChannelHandlerContext findContextInbound(int mask) {
         AbstractChannelHandlerContext ctx = this;
         EventExecutor currentExecutor = executor();
@@ -1000,6 +1003,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
                 // everything to preserve ordering.
                 //
                 // See https://github.com/netty/netty/issues/10067
+                // (ctx.executionMask & mask) == 0 表示 该context 没有覆写 mask 代表的方法，所以该context需要被跳过
                 (ctx.executor() == currentExecutor && (ctx.executionMask & mask) == 0);
     }
 

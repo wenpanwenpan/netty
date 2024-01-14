@@ -70,6 +70,7 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
      *                              {@link ByteBuf}, which is backed by an byte array.
      */
     protected MessageToByteEncoder(boolean preferDirect) {
+        // 查找 MessageToByteEncoder 的实现类的泛型I，比如：matcher.match(msg)如果为true，则表示msg的类型是实现类里指定的泛型
         matcher = TypeParameterMatcher.find(this, MessageToByteEncoder.class, "I");
         this.preferDirect = preferDirect;
     }
@@ -99,16 +100,20 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
         ByteBuf buf = null;
         try {
+            // 必须是出站消息
             if (acceptOutboundMessage(msg)) {
                 @SuppressWarnings("unchecked")
                 I cast = (I) msg;
+                // 为待发送的数据分配内存
                 buf = allocateBuffer(ctx, cast, preferDirect);
                 try {
+                    // 编码，将msg写入到buf内存中
                     encode(ctx, cast, buf);
                 } finally {
                     ReferenceCountUtil.release(cast);
                 }
 
+                // ctx.write 将事件在pipeline上传播，直到HeadContext中被真实的发送
                 if (buf.isReadable()) {
                     ctx.write(buf, promise);
                 } else {
@@ -117,6 +122,8 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
                 }
                 buf = null;
             } else {
+                // 调用当前context的write方法，继续向前（HeadContext）传播write
+                // io.netty.channel.AbstractChannelHandlerContext.write(java.lang.Object, io.netty.channel.ChannelPromise)
                 ctx.write(msg, promise);
             }
         } catch (EncoderException e) {
@@ -137,8 +144,10 @@ public abstract class MessageToByteEncoder<I> extends ChannelOutboundHandlerAdap
     protected ByteBuf allocateBuffer(ChannelHandlerContext ctx, @SuppressWarnings("unused") I msg,
                                boolean preferDirect) throws Exception {
         if (preferDirect) {
+            // 分配堆外内存
             return ctx.alloc().ioBuffer();
         } else {
+            // 分配堆内存
             return ctx.alloc().heapBuffer();
         }
     }
