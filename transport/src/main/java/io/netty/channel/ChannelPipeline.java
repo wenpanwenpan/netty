@@ -394,6 +394,7 @@ public interface ChannelPipeline
 
     /**
      * Removes the specified {@link ChannelHandler} from this pipeline.
+     * 从pipeline中删除指定的channelHandler
      *
      * @param  handler          the {@link ChannelHandler} to remove
      *
@@ -406,7 +407,7 @@ public interface ChannelPipeline
 
     /**
      * Removes the {@link ChannelHandler} with the specified name from this pipeline.
-     *
+     * 从pipeline中删除指定名称的channelHandler
      * @param  name             the name under which the {@link ChannelHandler} was stored.
      *
      * @return the removed handler
@@ -420,6 +421,7 @@ public interface ChannelPipeline
 
     /**
      * Removes the {@link ChannelHandler} of the specified type from this pipeline.
+     * 从pipeline中删除指定类型的channelHandler
      *
      * @param <T>           the type of the handler
      * @param handlerType   the type of the handler

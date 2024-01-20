@@ -289,9 +289,17 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
         return pipeline.deregister(promise);
     }
 
+    /**
+     * 大家这里需要注意区分 read 事件和 ChannelRead 事件的不同。read 事件则和 ChannelRead 事件完全不同，read 事件特指使 Channel 具备感知 IO 事件的能力。
+     * NioServerSocketChannel 对应的 OP_ACCEPT 事件的感知能力，NioSocketChannel 对应的是 OP_READ 事件的感知能力。read 事件的触发是在当 channel
+     * 需要向其对应的 reactor 注册读类型事件时（比如 OP_ACCEPT 事件 和  OP_READ 事件）才会触发。read 事件的响应就是将 channel 感兴趣的 IO 事件注册到对应的 reactor 上。
+     * read 事件可以理解为使 channel 拥有读的能力，当有了读的能力后， channelRead 就可以读取具体的数据了。
+     */
     @Override
     public Channel read() {
-        // 直接调用了pipeline的read方法，从尾节点开始向头节点传播read事件
+        // 直接调用了pipeline的read方法，从尾节点开始向头节点传播read事件（最终HeadContext会处理该事件，调用 Channel 的底层操作类 unsafe
+        // 的 beginRead 方法，在该方法中会向 reactor 注册 channel 感兴趣的 IO 事件。对于 NioServerSocketChannel 来说这里注册的就是
+        // OP_ACCEPT 事件，对于 NioSocketChannel 来说这里注册的则是 OP_READ 事件）
         pipeline.read();
         return this;
     }

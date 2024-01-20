@@ -405,6 +405,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      * the {@link ChannelHandler} to use for serving the requests.
      */
     public B handler(ChannelHandler handler) {
+        // 将要添加到serverSocketChannel的pipeline上的handler保存到handler属性上
         this.handler = ObjectUtil.checkNotNull(handler, "handler");
         return self();
     }

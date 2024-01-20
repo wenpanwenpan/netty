@@ -222,6 +222,13 @@ public abstract class AbstractNioChannel extends AbstractChannel {
     /**unsafe类中封装了channel底层操作，该抽象类封装了一些公用的方法*/
     protected abstract class AbstractNioUnsafe extends AbstractUnsafe implements NioUnsafe {
 
+        /**
+         * 移除该channel上的读事件，这是 netty 为大家提供的一种背压机制，用来防止 OOM ，想象一下当对端发送数据非常多并且发送速度非常快，而服务端处理速度非常慢，
+         * 一时间消费不过来。而对端又在不停的大量发送数据，服务端的 reactor 线程不得不在 read loop 中不停的读取，并且为读取到的数据分配 ByteBuffer 。
+         * 而服务端业务线程又处理不过来，这就导致了大量来不及处理的数据占用了大量的内存空间，从而导致 OOM 。面对这种情况，我们可以通过
+         * channelHandlerContext.channel().config().setAutoRead(false) 将 autoRead 属性设置为 false 。随后 netty 就会将 channel
+         * 中感兴趣的读类型事件从 reactor 中注销，从此 reactor 不会再对相应事件进行监听。这样 channel 就不会在读取数据了。
+         * */
         protected final void removeReadOp() {
             SelectionKey key = selectionKey();
             // Check first if the key is still valid as it may be canceled as part of the deregistration

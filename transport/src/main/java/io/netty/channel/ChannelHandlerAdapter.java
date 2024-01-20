@@ -23,6 +23,7 @@ import java.util.Map;
 
 /**
  * Skeleton implementation of a {@link ChannelHandler}.
+ * ChannelHandler 的适配器，提供了一些接口方法的默认实现，后续的 ChannelHandler 子类可以直接继承该类，覆写需要的方法即可
  */
 public abstract class ChannelHandlerAdapter implements ChannelHandler {
 
@@ -51,10 +52,12 @@ public abstract class ChannelHandlerAdapter implements ChannelHandler {
          *
          * See <a href="https://github.com/netty/netty/issues/2289">#2289</a>.
          */
+        // 获取当前handler的Class
         Class<?> clazz = getClass();
         Map<Class<?>, Boolean> cache = InternalThreadLocalMap.get().handlerSharableCache();
         Boolean sharable = cache.get(clazz);
         if (sharable == null) {
+            // 如果该handler上标注了 Sharable 注解，则说明是可以共享的，反之不可共享
             sharable = clazz.isAnnotationPresent(Sharable.class);
             cache.put(clazz, sharable);
         }

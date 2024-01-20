@@ -56,6 +56,7 @@ public abstract class AbstractBootstrapConfig<B extends AbstractBootstrap<B, C>,
      * Returns the configured {@link ChannelHandler} or {@code null} if non is configured yet.
      */
     public final ChannelHandler handler() {
+        // 可以看到这里就是获取的serverSocketChannel的对应的handler
         return bootstrap.handler();
     }
 

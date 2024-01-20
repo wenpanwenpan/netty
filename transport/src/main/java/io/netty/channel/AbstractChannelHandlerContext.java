@@ -96,7 +96,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     //对应channelHandler的名称
     private final String name;
     //false表示 当channelHandler的状态为ADD_PENDING的时候，也可以响应pipeline中的事件
-    //true表示只有在channelHandler的状态为ADD_COMPLETE的时候才能响应pipeline中的事件
+    //true表示只有在channelHandler的状态为ADD_COMPLETE的时候才能响应pipeline中的事件,@see invokeHandler
     private final boolean ordered;
     //channelHandlerContext中保存channelHandler的执行条件掩码（是什么类型的ChannelHandler,对什么事件感兴趣）
     // 在 ChannelHandler 被添加进 pipeline 的时候，Netty 会根据当前 ChannelHandler 的类型以及其覆盖实现的异步事件回调方法，
@@ -1063,7 +1063,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     final void callHandlerAdded() throws Exception {
         // We must call setAddComplete before calling handlerAdded. Otherwise if the handlerAdded method generates
         // any pipeline events ctx.handler() will miss them because the state will not allow it.
-        // 将handler的状态先设置为complete
+        // 将handler的状态先设置为complete（这是先设置handler的状态为 ADD_COMPLETE 是为了防止用户极端情况）
         if (setAddComplete()) {
             // 调用pipeline上的handler的handlerAdded方法，向pipeline上添加handler，一般多用于 ChannelInitializer
             handler().handlerAdded(this);
@@ -1073,11 +1073,13 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
     final void callHandlerRemoved() throws Exception {
         try {
             // Only call handlerRemoved(...) if we called handlerAdded(...) before.
+            // 只有 ADD_COMPLETE 状态的handler才能回调 handlerRemoved 方法
             if (handlerState == ADD_COMPLETE) {
                 handler().handlerRemoved(this);
             }
         } finally {
             // Mark the handler as removed in any case.
+            // 在 ChannelHandler 的 handlerRemove 方法被回调之后，将 ChannelHandler 的状态设置为 REMOVE_COMPLETE
             setRemoved();
         }
     }
@@ -1089,6 +1091,7 @@ abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, R
      * If this method returns {@code false} we will not invoke the {@link ChannelHandler} but just forward the event.
      * This is needed as {@link DefaultChannelPipeline} may already put the {@link ChannelHandler} in the linked-list
      * but not called {@link ChannelHandler#handlerAdded(ChannelHandlerContext)}.
+     * 这里想表达的意思就是，该handler是否成功添加到了pipeline
      */
     private boolean invokeHandler() {
         // 这里是一个优化点，netty 用一个局部变量保存 handlerState，目的是减少 volatile 变量 handlerState 的读取次数

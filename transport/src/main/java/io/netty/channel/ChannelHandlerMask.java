@@ -106,6 +106,9 @@ final class ChannelHandlerMask {
     private static final int MASK_ALL_OUTBOUND = MASK_EXCEPTION_CAUGHT | MASK_ONLY_OUTBOUND;
 
     // handler 掩码缓存，以handler的Clazz为key，该Class的掩码为value
+    // 这里需要一个 FastThreadLocal 类型的 MASKS 字段来缓存 ChannelHandler 对应的执行掩码。因为 ChannelHandler 类一旦被定义出来它的执行掩码就固定了，
+    // 而 netty 需要接收大量的连接，创建大量的 channel ，并为这些 channel 初始化对应的 pipeline ，需要频繁的记录 channelHandler 的执行掩码到 context 类中，
+    // 所以这里需要将掩码缓存起来
     private static final FastThreadLocal<Map<Class<? extends ChannelHandler>, Integer>> MASKS =
             new FastThreadLocal<Map<Class<? extends ChannelHandler>, Integer>>() {
                 @Override
@@ -120,11 +123,12 @@ final class ChannelHandlerMask {
     static int mask(Class<? extends ChannelHandler> clazz) {
         // Try to obtain the mask from the cache first. If this fails calculate it and put it in the cache for fast
         // lookup in the future.
+        // 因为每建立一个channel就会初始化一个pipeline，这里需要将ChannelHandler对应的mask缓存
         Map<Class<? extends ChannelHandler>, Integer> cache = MASKS.get();
         Integer mask = cache.get(clazz);
         // 如果缓存中还没有则计算一次并缓存
         if (mask == null) {
-            // 计算该 clazz 的掩码
+            // 计算ChannelHandler对应的mask（什么类型的ChannelHandler，对什么事件感兴趣）
             mask = mask0(clazz);
             cache.put(clazz, mask);
         }
@@ -134,6 +138,8 @@ final class ChannelHandlerMask {
     /**
      * Calculate the {@code executionMask}.
      * 计算 handlerType Class的掩码
+     * 从这个过程中我们可以看到，ChannelHandler 的执行掩码包含的是该 ChannelHandler 感兴趣的事件掩码集合。当事件在 pipeline 中传播的时候
+     * ，在 ChannelHandlerContext 中可以利用这个执行掩码来判断，当前 ChannelHandler 是否符合响应该事件的资格。
      */
     private static int mask0(Class<? extends ChannelHandler> handlerType) {
         int mask = MASK_EXCEPTION_CAUGHT;
@@ -145,6 +151,7 @@ final class ChannelHandlerMask {
 
                 // ============================下面的这些方法都是检查某些方法使用要从掩码里去除============================
 
+                //最后在对不感兴趣的事件一一排除（handler中的事件回调方法如果标注了@Skip注解，则认为handler对该事件不感兴趣）
                 // 检查handlerType是否需要跳过channelRegistered方法，如果为true则从mask里去除该方法
                 if (isSkippable(handlerType, "channelRegistered", ChannelHandlerContext.class)) {
                     // 取反再做与运算，就相当于将 channelRegistered 方法从掩码中去除了
@@ -175,9 +182,10 @@ final class ChannelHandlerMask {
 
             // 出站handler
             if (ChannelOutboundHandler.class.isAssignableFrom(handlerType)) {
-                // 通过与运算将所有的出站事件都添加到掩码集合
+                //如果handler为Outbound类型的，则先将全部outbound事件设置进掩码中
                 mask |= MASK_ALL_OUTBOUND;
 
+                //最后对handler不感兴趣的事件从掩码中一一排除
                 if (isSkippable(handlerType, "bind", ChannelHandlerContext.class,
                         SocketAddress.class, ChannelPromise.class)) {
                     mask &= ~MASK_BIND;
@@ -215,6 +223,7 @@ final class ChannelHandlerMask {
             PlatformDependent.throwException(e);
         }
 
+        // 计算出的掩码需要缓存，因为每次向pipeline中添加该类型的handler的时候都需要获取掩码（创建一个channel 就需要为其初始化pipeline）
         return mask;
     }
 

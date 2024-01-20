@@ -47,6 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * ...
  * </pre>
  * Be aware that this class is marked as {@link Sharable} and so the implementation must be safe to be re-used.
+ * 该类的主要职责就是为pipeline上添加多个handler
  *
  * @param <C>   A sub-type of {@link Channel}
  */
@@ -81,16 +82,19 @@ public abstract class ChannelInitializer<C extends Channel> extends ChannelInbou
     public final void channelRegistered(ChannelHandlerContext ctx) throws Exception {
         // Normally this method will never be called as handlerAdded(...) should call initChannel(...) and remove
         // the handler.
-        //当channelRegister事件发生时，调用initChannel初始化pipeline
+        //当channelRegister事件发生时，说明该channel已经注册到reactor上了，此时调用initChannel初始化pipeline
+        // 如果返回true，在说明该context第一次添加，如果返回false则说明该context已经添加过了，不用重复添加
         if (initChannel(ctx)) {
             // we called initChannel(...) so we need to call now pipeline.fireChannelRegistered() to ensure we not
             // miss an event.
+            // 从head节点开始向后传播channelRegistered事件
             ctx.pipeline().fireChannelRegistered();
 
             // We are done with init the Channel, removing all the state for the Channel now.
             removeState(ctx);
         } else {
             // Called initChannel(...) before which is the expected behavior, so just forward the event.
+            // 从当前节点向后传播 channelRegistered 事件
             ctx.fireChannelRegistered();
         }
     }
@@ -108,16 +112,17 @@ public abstract class ChannelInitializer<C extends Channel> extends ChannelInbou
 
     /**
      * {@inheritDoc} If override this method ensure you call super!
+     * 在channel注册到reactor上成功后会回调这个方法，这个方法里会调用 initChannel 向channel的pipeline上添加自定义的handler
      */
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
-        // 首先要判断必须是当前Channel已经完成注册后，才可以进行pipeline的初始化
+        // 1、首先要判断必须是当前Channel已经完成注册后（注册到reactor上），才可以进行pipeline的初始化
         if (ctx.channel().isRegistered()) {
             // This should always be true with our current DefaultChannelPipeline implementation.
             // The good thing about calling initChannel(...) in handlerAdded(...) is that there will be no ordering
             // surprises if a ChannelInitializer will add another ChannelInitializer. This is as all handlers
             // will be added in the expected order.
-            // 调用 initChannel 方法向channel的pipeline上添加自定义的handler，添加完成后就把自己从pipeline上移除
+            // 2、调用 initChannel 方法向channel的pipeline上添加自定义的handler，添加完成后就把自己从pipeline上移除
             if (initChannel(ctx)) {
                 // We are done with init the Channel, removing the initializer now.
                 //初始化工作完成后，需要将自身（也就是 ChannelInitializer ）从pipeline中移除
@@ -133,11 +138,11 @@ public abstract class ChannelInitializer<C extends Channel> extends ChannelInbou
 
     @SuppressWarnings("unchecked")
     private boolean initChannel(ChannelHandlerContext ctx) throws Exception {
-        // 这个initMap是一个set（类型为 ： SetFromMap），他的add方法作用如下：向该set中添加元素，如果元素之前不存在则返回true，如果元素已存在则返回false
+        // 1、这个initMap是一个set（类型为 ： SetFromMap），他的add方法作用如下：向该set中添加元素，如果元素之前不存在则返回true，如果元素已存在则返回false
         // 这里通过add 来控制同一个ChannelHandlerContext只有第一次添加时才会执行if块内的逻辑
         if (initMap.add(ctx)) { // Guard against re-entrance.
             try {
-                // 此时客户端NioSocketChannel已经创建并初始化好了，可以看到这里就回调了我们自定义向channel上添加handler的initChannel方法
+                // 2、此时客户端NioSocketChannel已经创建并初始化好了，可以看到这里就回调了我们自定义向channel上添加handler的initChannel方法
                 // handler就是在这里被添加到channel上的pipeline上的
                 initChannel((C) ctx.channel());
             } catch (Throwable cause) {
@@ -146,6 +151,7 @@ public abstract class ChannelInitializer<C extends Channel> extends ChannelInbou
                 exceptionCaught(ctx, cause);
             } finally {
                 ChannelPipeline pipeline = ctx.pipeline();
+                // 3、确保当前handler（也就是 ChannelInitializer）在pipeline上，如果在则将自己从pipeline移除
                 if (pipeline.context(this) != null) {
                     // 当执行完initChannel 方法后，ChannelPipeline的初始化就结束了，此时ChannelInitializer就没必要再继续呆在pipeline中了，
                     // 所需要将ChannelInitializer从pipeline中删除

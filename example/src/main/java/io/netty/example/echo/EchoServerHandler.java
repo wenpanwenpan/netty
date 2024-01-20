@@ -21,9 +21,11 @@ import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.nio.AbstractNioMessageChannel;
+import io.netty.example.event.OurOwnDefinedEvent;
 
 /**
  * Handler implementation for the echo server.
+ * @Sharable 表示该handler可以在多个pipeline中共享
  */
 @Sharable
 public class EchoServerHandler extends ChannelInboundHandlerAdapter {
@@ -58,6 +60,24 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
             }
         });
         ctx.write(msg);
+
+        // 当我们处理完业务逻辑得到业务处理结果后，会调用 ctx.write(msg) 触发 write 事件在 pipeline 中的传播,最终 netty 会将发送数据 msg
+        // 写入 NioSocketChannel 中的待发送缓冲队列 ChannelOutboundBuffer 中。并等待用户调用 flush 操作从 ChannelOutboundBuffer
+        // 中将待发送数据 msg ，写入到底层 Socket 的发送缓冲区中.当对端的接收处理速度非常慢或者网络状况极度拥塞时，使得 TCP 滑动窗口不断的缩小，
+        // 这就导致发送端的发送速度也变得越来越小，而此时用户还在不断的调用 ctx.write(msg) ，这就会导致 ChannelOutboundBuffer 会急剧增大，从而可能导致 OOM 。
+        // netty 引入了高低水位线来控制 ChannelOutboundBuffer 的内存占用。当 ChanneOutboundBuffer 中的内存占用量超过高水位线时，netty 就会将对应的 channel
+        // 置为不可写状态，并在 pipeline 中触发 ChannelWritabilityChanged 事件。当 ChannelOutboundBuffer 中的内存占用量低于低水位线时，
+        // netty 又会将对应的 NioSocketChannel 设置为可写状态，并再次触发 ChannelWritabilityChanged 事件。用户可在自定义 ChannelHandler
+        // 中通过 ctx.channel().isWritable() 判断当前 channel 是否可写。
+        boolean writable = ctx.channel().isWritable();
+        if (writable){
+            // do something
+        }
+
+        //事件在pipeline中从当前ChannelHandlerContext开始向后传播
+        ctx.fireUserEventTriggered(OurOwnDefinedEvent.INSTANCE);
+        //事件从pipeline的头结点headContext开始向后传播
+        ctx.channel().pipeline().fireUserEventTriggered(OurOwnDefinedEvent.INSTANCE);
     }
 
     @Override
@@ -72,5 +92,21 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
         // Close the connection when an exception is raised.
         cause.printStackTrace();
         ctx.close();
+    }
+
+    /**
+     * netty 支持用户自定义事件发布和订阅
+     */
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        if (OurOwnDefinedEvent.INSTANCE == evt) {
+              // .....自定义事件处理......
+            System.out.println("接收到自定义事件");
+        }
+    }
+
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        super.channelActive(ctx);
     }
 }

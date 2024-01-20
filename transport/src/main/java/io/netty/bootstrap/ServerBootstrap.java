@@ -164,11 +164,14 @@ public class ServerBootstrap extends AbstractBootstrap<ServerBootstrap, ServerCh
         // 1、为了保证线程安全地初始化pipeline，所以初始化的动作需要由Reactor线程进行，而当前线程是用户程序的启动Main线程 并不是Reactor线程。这里不能立即初始化。
         // 2、初始化Channel中pipeline的动作，需要等到Channel注册到对应的Reactor中才可以进行初始化，当前只是创建好了NioServerSocketChannel，但并未注册到Main Reactor上。
         // 初始化NioServerSocketChannel中pipeline的时机是：当NioServerSocketChannel注册到Main Reactor之后，绑定端口地址之前。
+        // 下面的 config.handler() 是我们在ServerBootstrap中用户指定的channelHandler，可以是ChannelInitializer（添加多个handler
+        // 到server端的pipeline上），也可以是单个ChannelHandler（只添加一个handler到pipeline上）
         p.addLast(new ChannelInitializer<Channel>() {
             @Override
             public void initChannel(final Channel ch) {
                 final ChannelPipeline pipeline = ch.pipeline();
                 // ServerBootstrap中用户指定的channelHandler（比如：我们在 io.netty.example.echo.EchoServer 中配置的 LoggingHandler）
+                // 如果用户指定的handler是一个 ChannelInitializer ，那么可以看到在用户指定的 ChannelInitializer 上又包裹了一层 ChannelInitializer
                 ChannelHandler handler = config.handler();
                 if (handler != null) {
                     // 当执行 initChannel 方法时就会同步添加这个handler到pipeline，而下面的那个handler为啥又要提交到reactor线程进行异步添加呢？
