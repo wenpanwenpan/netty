@@ -136,6 +136,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     public boolean isInputShutdown() {
+        // 判断该channel（也就是socket）的读通道是否关闭
         return javaChannel().socket().isInputShutdown() || !isActive();
     }
 
@@ -168,12 +169,14 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     public ChannelFuture shutdownOutput() {
+        // 关闭channel的写通道，TCP是一个面向连接的、可靠的、基于字节流的全双工通道（一个读通道一个写通道，所以可以分开关闭）
         return shutdownOutput(newPromise());
     }
 
     @Override
     public ChannelFuture shutdownOutput(final ChannelPromise promise) {
         final EventLoop loop = eventLoop();
+        // 我们可以看出对于 shutdownOutput 的操作也是必须在 Reactor 线程中完成。
         if (loop.inEventLoop()) {
             ((AbstractUnsafe) unsafe()).shutdownOutput(promise);
         } else {
@@ -189,6 +192,9 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
 
     @Override
     public ChannelFuture shutdownInput() {
+        // 关闭读通道
+        // 调用 shutdownInput 方法关闭服务端 Channel 的读通道，如果此时 Socket 接收缓冲区还有数据，则会将这些数据统统丢弃。
+        // 注意关闭读通道并不会向对端发送 FIN ，此时服务端连接依然处于 CLOSE_WAIT 状态
         return shutdownInput(newPromise());
     }
 
@@ -277,6 +283,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
     @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     private void shutdownInput0() throws Exception {
         if (PlatformDependent.javaVersion() >= 7) {
+            //调用底层JDK socketChannel关闭接收方向的通道
             javaChannel().shutdownInput();
         } else {
             javaChannel().socket().shutdownInput();
@@ -342,6 +349,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
     @Override
     protected void doClose() throws Exception {
         super.doClose();
+        // 关闭底层 JDK 中的 SocketChannel
         javaChannel().close();
     }
 
@@ -491,15 +499,31 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * @author wenpan 2023/12/23 6:22 下午
      */
     private final class NioSocketChannelUnsafe extends NioByteUnsafe {
+        /**
+         * 要理解这段逻辑，首先我们需要理解 SO_LINGER 这个 Socket 选项，他会影响 Socket 的关闭行为。
+         * 在默认情况下，当我们调用 Socket 的 close 方法后 ，close 方法会立即返回，剩下的事情会交给内核协议栈帮助我们处理，如果此时 Socket
+         * 对应的发送缓冲区还有数据待发送，接下来内核协议栈会将 Socket 发送缓冲区的数据发送出去，随后会向对端发送 FIN 包关闭连接。
+         * 注意：此时应用程序是无法感知到这些数据是否已经发送到对端的，因为应用程序在调用 close 方法后就立马返回了，剩下的这些都是内核在替我们完成。
+         * 接着主动关闭方就进入了 TCP 四次挥手的关闭流程最后进入TIME_WAIT状态。而 SO_LINGER 选项会控制调用 close 方法关闭 Socket 的行为。
+         * @return executor 返回一个 Executor，这个 Executor 用于执行真正的 Channel 关闭任务
+         * @author wenpan 2024/1/27 12:12 下午
+         */
         @Override
         protected Executor prepareToClose() {
             try {
+                //在设置SO_LINGER后，channel会延时关闭，在延时期间我们仍然可以进行读写，这样会导致io线程eventloop不断的循环浪费cpu资源
+                //所以需要在延时关闭期间 将channel注册的事件全部取消。
                 if (javaChannel().isOpen() && config().getSoLinger() > 0) {
                     // We need to cancel this key of the channel so we may not end up in a eventloop spin
                     // because we try to read or write until the actual close happens which may be later due
                     // SO_LINGER handling.
                     // See https://github.com/netty/netty/issues/4449
+                    // 从reactor上取消该channel的注册
                     doDeregister();
+                    /**
+                     * 设置了SO_LINGER,不管是阻塞socket还是非阻塞socket，在关闭的时候都会发生阻塞，所以这里不能使用Reactor线程来
+                     * 执行关闭任务，否则Reactor线程就会被阻塞。
+                     * */
                     return GlobalEventExecutor.INSTANCE;
                 }
             } catch (Throwable ignore) {
@@ -507,6 +531,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
                 // getSoLinger() may produce an exception. In this case we just return null.
                 // See https://github.com/netty/netty/issues/4449
             }
+            //在没有设置SO_LINGER的情况下，可以使用Reactor线程来执行关闭任务(返回null表示用reactor线程来执行channel的关闭)
             return null;
         }
     }

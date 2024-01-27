@@ -324,6 +324,10 @@ public final class ChannelOutboundBuffer {
         return remove0(cause, true);
     }
 
+    /**
+     * 在 remove0 方法中 netty 会将已经关闭的 Channel 对应的 ChannelOutboundBuffer 中还没来得及 flush 进 Socket 发送缓存区中的数据全部清除掉
+     * Entry 对象中封装了用户待发送数据的 ByteBuffer，以及用于通知用户发送结果的 promise 实例
+     */
     private boolean remove0(Throwable cause, boolean notifyWritability) {
         Entry e = flushedEntry;
         if (e == null) {
@@ -365,6 +369,7 @@ public final class ChannelOutboundBuffer {
                 unflushedEntry = null;
             }
         } else {
+            // flushedEntry 置为下一个节点
             flushedEntry = e.next;
         }
     }
@@ -716,6 +721,8 @@ public final class ChannelOutboundBuffer {
         try {
             inFail = true;
             for (;;) {
+                // 循环清除channelOutboundBuffer中的待发送数据
+                // 将entry从buffer中删除，并释放entry中的bytebuffer，通知promise failed
                 if (!remove0(cause, notify)) {
                     break;
                 }
@@ -747,6 +754,7 @@ public final class ChannelOutboundBuffer {
         }
 
         // Release all unflushed messages.
+        //循环清理channelOutboundBuffer中的unflushedEntry，因为在执行关闭之前有可能用户有一些数据write进来，需要清理掉
         try {
             Entry e = unflushedEntry;
             while (e != null) {
@@ -755,14 +763,18 @@ public final class ChannelOutboundBuffer {
                 TOTAL_PENDING_SIZE_UPDATER.addAndGet(this, -size);
 
                 if (!e.cancelled) {
+                    //释放unflushedEntry中的bytebuffer
                     ReferenceCountUtil.safeRelease(e.msg);
+                    //通知unflushedEntry中的promise failed
                     safeFail(e.promise, cause);
                 }
+                // 归还当前节点给对象池，并且获取当前节点的下一个节点
                 e = e.recycleAndGetNext();
             }
         } finally {
             inFail = false;
         }
+        //清理channel用于缓存JDK nioBuffer的 threadLocal缓存NIO_BUFFERS
         clearNioBuffers();
     }
 
@@ -957,9 +969,13 @@ public final class ChannelOutboundBuffer {
             handle.recycle(this);
         }
 
+        // 归还当前节点给对象池，并且返回当前节点的下一个节点
         Entry recycleAndGetNext() {
+            // 指向下一个节点
             Entry next = this.next;
+            // 归还当前节点给对象池
             recycle();
+            // 返回下一个节点
             return next;
         }
     }

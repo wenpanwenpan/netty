@@ -120,6 +120,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
 
                 int size = readBuf.size();
                 // 如果上面while循环里读取到的已完成三次握手的client数量大于0，则在这里统一处理
+                // 注意对比 NIOServerSocketChannel的触发fireChannelRead事件的时机和 NIOSocketChannel 触发fireChannelRead事件的时机
+                // NIOServerSocketChannel是先统一读取（上面的do-while），然后循环触发 fireChannelRead 事件，而NIOSocketChannel则是
+                // 每读取一次（do-while每循环一次），则触发一次 fireChannelRead @see io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe.read
                 for (int i = 0; i < size; i ++) {
                     readPending = false;
                     //在NioServerSocketChannel对应的pipeline中传播ChannelRead事件

@@ -65,6 +65,7 @@ public final class EchoServer {
                     // 注意这时只是配置阶段，NioServerSocketChannel此时并未被创建。它是在启动的时候才会被创建出来。
                     .channel(NioServerSocketChannel.class)
                     //设置被MainReactor管理的NioServerSocketChannel的Socket选项
+                    // 设置server端全连接队列的长度（全连接队列 ACCEPT-Queue 的长度由 min(backlog, somaxconn是Linux系统参数) 决定）
                     .option(ChannelOption.SO_BACKLOG, 100)
                     // 设置主Reactor中Channel->pipline->handler，可以看到这里只能添加一个handler到pipeline上，如果要添加多个则需要用ChannelInitializer
              .handler(new LoggingHandler(LogLevel.INFO))

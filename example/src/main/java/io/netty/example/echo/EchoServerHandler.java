@@ -21,6 +21,7 @@ import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.nio.AbstractNioMessageChannel;
+import io.netty.channel.socket.SocketChannel;
 import io.netty.example.event.OurOwnDefinedEvent;
 
 /**
@@ -78,6 +79,10 @@ public class EchoServerHandler extends ChannelInboundHandlerAdapter {
         ctx.fireUserEventTriggered(OurOwnDefinedEvent.INSTANCE);
         //事件从pipeline的头结点headContext开始向后传播
         ctx.channel().pipeline().fireUserEventTriggered(OurOwnDefinedEvent.INSTANCE);
+
+        // 只关闭写通道
+        SocketChannel sc = (SocketChannel) ctx.channel();
+        sc.shutdownOutput();
     }
 
     @Override

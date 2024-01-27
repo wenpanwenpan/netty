@@ -54,6 +54,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
     // pipeline其实是一个ChannelHandlerContext类型的双向链表。头结点HeadContext,尾结点TailContext。ChannelHandlerContext中包装着ChannelHandler,用于事件传播
     private final DefaultChannelPipeline pipeline;
     private final VoidChannelPromise unsafeVoidPromise = new VoidChannelPromise(this, false);
+    // 关闭channel操作的指定future，来判断关闭流程进度 每个channel对应一个CloseFuture，连接关闭之后，netty 会通知这个CloseFuture
     private final CloseFuture closeFuture = new CloseFuture(this);
 
     private volatile SocketAddress localAddress;
@@ -61,6 +62,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
     // 该channel绑定的reactor
     private volatile EventLoop eventLoop;
     private volatile boolean registered;
+    // channel的关闭流程是否已经开始
     private boolean closeInitiated;
     private Throwable initialCloseCause;
 
@@ -696,12 +698,19 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             closeIfClosed(); // doDisconnect() might have closed the channel
         }
 
+        /**
+         * 客户端主动关闭和server端被动关闭都是走这个方法，只是传入的 ChannelPromise 不一样，主动关闭方是需要关注结果的，所以会传入
+         * DefaultChannelPromise ，server端被动关闭，不需要关注结果所以传入的是 VoidChannelPromise，
+         * @see io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe#closeOnRead(io.netty.channel.ChannelPipeline)
+         * @author wenpan 2024/1/27 12:06 下午
+         */
         @Override
         public void close(final ChannelPromise promise) {
             assertEventLoop();
 
             ClosedChannelException closedChannelException =
                     StacklessClosedChannelException.newInstance(AbstractChannel.class, "close(ChannelPromise)");
+            // 关闭channel
             close(promise, closedChannelException, closedChannelException, false);
         }
 
@@ -726,15 +735,20 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
 
             final ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            //如果Channel已经close了，直接返回
             if (outboundBuffer == null) {
                 promise.setFailure(new ClosedChannelException());
                 return;
             }
+            //半关闭状态下，不允许继续写入数据到Socket
+            //当 shutdownOutput 方法调用之后，主动关闭方连接的写通道就被关闭了，所以在这个状态下是不允许用户继续向 Channel 写入数据的，
+            // 所以这里会将 Channel 对应的写入缓冲队列 ChannelOutboundBuffer 设置为 null 。
             this.outboundBuffer = null; // Disallow adding any messages and flushes to outboundBuffer.
 
             final Throwable shutdownCause = cause == null ?
                     new ChannelOutputShutdownException("Channel output shutdown") :
                     new ChannelOutputShutdownException("Channel output shutdown", cause);
+            // 很关键
             Executor closeExecutor = prepareToClose();
             if (closeExecutor != null) {
                 closeExecutor.execute(new Runnable() {
@@ -742,6 +756,9 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     public void run() {
                         try {
                             // Execute the shutdown.
+                            // 将jdk nio 底层的Socket shutdown
+                            // 接下来就会调用 doShutdownOutput() 方法关闭底层 JDK NIO SocketChannel 的写通道。此时内核协议栈会向对端发送 FIN 发起 TCP 半关闭流程。
+                            // 这里就会调用doClose方法，发送fin包给对端，并且将 Channel 从 Reactor 中注销掉。
                             doShutdownOutput();
                             promise.setSuccess();
                         } catch (Throwable err) {
@@ -751,6 +768,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                             eventLoop().execute(new Runnable() {
                                 @Override
                                 public void run() {
+                                    //清理ChannelOutboundBuffer，并触发ChannelOutputShutdownEvent事件
                                     closeOutboundBufferForShutdown(pipeline, outboundBuffer, shutdownCause);
                                 }
                             });
@@ -760,6 +778,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             } else {
                 try {
                     // Execute the shutdown.
+                    // 在 Reactor 线程中执行
                     doShutdownOutput();
                     promise.setSuccess();
                 } catch (Throwable err) {
@@ -770,25 +789,39 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
         }
 
+        /**当关闭了读通道后清理OutboundBuffer*/
         private void closeOutboundBufferForShutdown(
                 ChannelPipeline pipeline, ChannelOutboundBuffer buffer, Throwable cause) {
+            //shutdownOutput半关闭后需要清理channelOutboundBuffer中的待发送数据flushedEntry
             buffer.failFlushed(cause, false);
+            //循环清理channelOutboundBuffer中的unflushedEntry
             buffer.close(cause, true);
+            // 发送读通道关闭事件
             pipeline.fireUserEventTriggered(ChannelOutputShutdownEvent.INSTANCE);
         }
 
         private void close(final ChannelPromise promise, final Throwable cause,
                            final ClosedChannelException closeCause, final boolean notify) {
             if (!promise.setUncancellable()) {
+                //关闭操作如果被取消则直接返回
                 return;
             }
 
+            // channel的关闭流程是否已经开始，Netty 这里使用一个 boolean closeInitiated 变量来防止 Reactor 线程来重复执行关闭流程，
+            // 因为 Channel 的关闭操作可以在多个业务线程中发起，这样就会导致多个业务线程向 Reactor 线程提交多个关闭 Channel 的任务
             if (closeInitiated) {
+                // 如果此时channel已经开始关闭流程，则进入这里。Netty 还为每一个 Channel 创建了一个 CloseFuture closeFuture，用来表示 Channel
+                // 关闭的相关进度状态。当 Channel 完成关闭后，Netty 会设置 closeFuture 为 success 状态，并通知 closeFuture 上注册的 listener
+                // 如果 closeInitiated == true 说明当前 Channel 的关闭操作已经开始，如果有多个业务线程先后提交过来多个关闭任务，Reactor 线程
+                // 则会首先通过 closeFuture.isDone() 判断当前 Channel 是否已经完成关闭 ，如果 Channel 已经关闭，则会在 closeFuture 上注册的
+                // listener 中设置关闭任务对应的 Promie 为 success ，进而通知到业务线程
                 if (closeFuture.isDone()) {
                     // Closed already.
+                    //如果channel已经关闭 则设置promise为success，如果promise是voidPromise类型则会跳过
                     safeSetSuccess(promise);
                 } else if (!(promise instanceof VoidChannelPromise)) { // Only needed if no VoidChannelPromise.
                     // This means close() was called before so we just register a listener and return
+                    //如果promise不是voidPromise，则会在关闭完成后 通过closeFuture设置promise success
                     closeFuture.addListener(new ChannelFutureListener() {
                         @Override
                         public void operationComplete(ChannelFuture future) throws Exception {
@@ -796,42 +829,69 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                         }
                     });
                 }
+                // 直接返回，防止重复关闭
                 return;
             }
 
+            //当前channel现在开始进入正在关闭状态
             closeInitiated = true;
 
+            // 当前channel是否active
             final boolean wasActive = isActive();
             //待发送数据缓冲队列  Netty是全异步框架，所以这里需要一个缓冲队列来缓存用户需要发送的数据
             final ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
+            //将channel对应的写缓冲区channelOutboundBuffer设置为null 表示channel要关闭了，不允许继续发送数据，此时如果还在write数据，
+            // 则直接释放bytebuffer，并立马 fail 相关writeFuture 并抛出newClosedChannelException异常，此时如果执行flush，则会直接返回
+            // @see io.netty.channel.AbstractChannel.AbstractUnsafe.write, io.netty.channel.AbstractChannel.AbstractUnsafe.flush
             this.outboundBuffer = null; // Disallow adding any messages and flushes to outboundBuffer.
+            //如果开启了SO_LINGER，则需要先将channel从reactor中取消掉。避免reactor线程空转浪费cpu，返回值是用于执行关闭流程的executor
             Executor closeExecutor = prepareToClose();
+            // 如果closeExecutor不等于空，则说明需要由 GlobalEventExecutor.INSTANCE 线程池来执行channel关闭的逻辑
             if (closeExecutor != null) {
                 closeExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
                             // Execute the close.
+                            // 在GlobalEventExecutor中执行channel的关闭任务,设置closeFuture,promise success
+                            // 当调用了 doClose0() 方法后，此时服务端的内核协议栈就会向客户端发出 FIN 包，服务端结束 CLOSE_WAIT 状态进入 LAST_ACK 状态
                             doClose0(promise);
                         } finally {
+                            // reactor线程中执行
                             // Call invokeLater so closeAndDeregister is executed in the EventLoop again!
                             invokeLater(new Runnable() {
                                 @Override
                                 public void run() {
+                                    // ①、当 Channel 的关闭操作在 closeExecutor 线程中执行完毕之后，此时 Channel 从物理上就已经关闭了，但是 Channel 中还有一些遗留的东西需要清理，
+                                    // 比如 Channel 对应的写入缓冲队列 ChannelOutboundBuffer 中的待发送数据需要被清理掉，并通知用户线程由于 Channel 已经关闭，导致数据发送失败
                                     if (outboundBuffer != null) {
                                         // Fail all the queued messages
+                                        // cause = closeCause = ClosedChannelException, notify = false
+                                        // 1、清理 outboundBuffer 中待刷写到socket缓冲区中的数据
+                                        // 此时channel已经关闭，需要清理对应channelOutboundBuffer中的待发送数据flushedEntry
                                         outboundBuffer.failFlushed(cause, notify);
+                                        // 2、循环清理channelOutboundBuffer中的unflushedEntry
+                                        // 还有一种情况 Netty 这里需要考虑处理，由于在关闭 Channel 之前，用户可能还会向 ChannelOutboundBuffer 中 write 数据，
+                                        // 但还未来得及调用 flush 操作，这就导致了 ChannelOutboundBuffer 中在 unflushedEntry 指针与 tailEntry 指针
+                                        // 之间还可能会有数据。所以还需要调用 ChannelOutboundBuffer#close 方法将这一部分数据全部清理掉
                                         outboundBuffer.close(closeCause);
                                     }
+                                    // ②、同时 Netty 也需要让用户感知到 Channel 已经关闭的事件，所以还需要在关闭 Channel 对应的
+                                    // pipeline 中触发 ChannelInactive 事件和 ChannelUnregistered 事件。
                                     fireChannelInactiveAndDeregister(wasActive);
+                                    // 而以上列举的这两点清理 Channel 的相关工作则需要在 Reactor 线程中完成，不能在 closeExecutor 线程中完成。
+                                    // 这是处于线程安全的考虑，因为在 Channel 关闭之前，对于 ChannelOutboundBuffer 以及 pipeline 的操作均是由
+                                    // Reactor 线程来执行的，Channel 关闭之后相关的清理工作理应继续由 Reactor 线程负责，避免多线程执行产生线程安全问题
                                 }
                             });
                         }
                     }
                 });
             } else {
+                // 如果 closeExecutor 等于空则说明由reactor线程来执行关闭逻辑
                 try {
                     // Close the channel and fail the queued messages in all cases.
+                    // 当调用了 doClose0() 方法后，此时服务端的内核协议栈就会向客户端发出 FIN 包，服务端结束 CLOSE_WAIT 状态进入 LAST_ACK 状态
                     doClose0(promise);
                 } finally {
                     if (outboundBuffer != null) {
@@ -840,7 +900,11 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                         outboundBuffer.close(closeCause);
                     }
                 }
+                // 此时 Channel 已经关闭，如果此时用户还在执行 flush 操作
+                // netty 则会在 flush 方法的处理中处理 Channel 关闭的情况
+                // 所以这里 deRegister 操作需要延后到 flush 方法处理完之后
                 if (inFlush0) {
+                    // 提交到reactor线程任务队列中等待执行
                     invokeLater(new Runnable() {
                         @Override
                         public void run() {
@@ -855,16 +919,24 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
         private void doClose0(ChannelPromise promise) {
             try {
+                // 关闭channel，此时服务端向客户端发送fin2，服务端进入last_ack状态，客户端收到fin2进入time_wait状态
                 doClose();
+                // 设置clostFuture的状态为success，表示channel已经关闭
+                // 调用shutdownOutput则不会通知closeFuture
                 closeFuture.setClosed();
+                // 通知用户promise success,关闭操作已经完成
                 safeSetSuccess(promise);
             } catch (Throwable t) {
                 closeFuture.setClosed();
+                // 通知用户线程关闭失败
                 safeSetFailure(promise, t);
             }
         }
 
+        // 传播ChannelInactive和取消注册事件Deregister
         private void fireChannelInactiveAndDeregister(final boolean wasActive) {
+            //wasActive && !isActive() 条件表示 channel的状态第一次从active变为 inactive
+            //这里的wasActive = true  isActive()= false
             deregister(voidPromise(), wasActive && !isActive());
         }
 
@@ -886,6 +958,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             deregister(promise, false);
         }
 
+        /**取消注册*/
         private void deregister(final ChannelPromise promise, final boolean fireChannelInactive) {
             if (!promise.setUncancellable()) {
                 return;
@@ -905,14 +978,17 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             //
             // See:
             // https://github.com/netty/netty/issues/4435
+            // 提交到reactor线程队列里等待执行
             invokeLater(new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        //将channel从reactor中注销，reactor不在监听channel上的事件
                         doDeregister();
                     } catch (Throwable t) {
                         logger.warn("Unexpected exception occurred while deregistering a channel.", t);
                     } finally {
+                        //当channel被关闭后，触发ChannelInactive事件
                         if (fireChannelInactive) {
                             pipeline.fireChannelInactive();
                         }
@@ -921,9 +997,12 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                         // close() calls deregister() again - no need to fire channelUnregistered, so check
                         // if it was registered.
                         if (registered) {
+                            //如果channel没有注册，则不需要触发ChannelUnregistered
                             registered = false;
+                            //随后触发ChannelUnregistered
                             pipeline.fireChannelUnregistered();
                         }
+                        //通知deRegisterPromise
                         safeSetSuccess(promise);
                     }
                 }
@@ -1003,7 +1082,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             assertEventLoop();
             // 获取channel的发送缓冲队列
             ChannelOutboundBuffer outboundBuffer = this.outboundBuffer;
-            //channel已关闭
+            //channel已关闭，不在继续将数据刷写到socket的发送缓冲区了
             if (outboundBuffer == null) {
                 return;
             }
@@ -1123,6 +1202,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
          */
         protected final void safeSetSuccess(ChannelPromise promise) {
             // trySuccess 唤醒promise上等待的listeners
+            // 从这里也可以看出 VoidChannelPromise 表示一个空的 Promise ，不能对其设置 success 或者 fail , 更不能对其添加 listener 。
+            // 一般用于不关心操作结果的场景(比如：由client端主动发起关闭，server端被动关闭，那么server端就不会关心操作结果)
             if (!(promise instanceof VoidChannelPromise) && !promise.trySuccess()) {
                 logger.warn("Failed to mark a promise as success because it is done already: {}", promise);
             }
