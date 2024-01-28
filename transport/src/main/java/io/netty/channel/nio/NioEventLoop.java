@@ -669,8 +669,11 @@ public final class NioEventLoop extends SingleThreadEventLoop {
                 try {
                     // 线程关闭了，比如：bossGroup.shutdownGracefully(); 就会关闭group中每个eventLoop（reactor），从而关闭reactor线程
                     if (isShuttingDown()) {
+                        //关闭Reactor上注册的所有Channel,停止处理IO事件，触发unActive以及unRegister事件
                         closeAll();
+                        //注销掉所有Channel停止处理IO事件之后，剩下的就需要执行Reactor中剩余的异步任务了
                         if (confirmShutdown()) {
+                            // 退出run方法，reactor线程正式结束
                             return;
                         }
                     }
@@ -740,6 +743,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     @Override
     protected void cleanup() {
         try {
+            // 关闭reactor中的selector
             selector.close();
         } catch (IOException e) {
             logger.warn("Failed to close a selector.", e);
@@ -956,10 +960,13 @@ public final class NioEventLoop extends SingleThreadEventLoop {
     }
 
     private void closeAll() {
+        //这里的目的是清理selector中的一些无效key
         selectAgain();
+        //获取Selector上注册的所有Channel
         Set<SelectionKey> keys = selector.keys();
         Collection<AbstractNioChannel> channels = new ArrayList<AbstractNioChannel>(keys.size());
         for (SelectionKey k: keys) {
+            //获取NioSocketChannel
             Object a = k.attachment();
             if (a instanceof AbstractNioChannel) {
                 channels.add((AbstractNioChannel) a);
@@ -972,6 +979,7 @@ public final class NioEventLoop extends SingleThreadEventLoop {
         }
 
         for (AbstractNioChannel ch: channels) {
+            //关闭Reactor上注册的所有Channel，并在pipeline中触发unActive事件和unRegister事件
             ch.unsafe().close(ch.unsafe().voidPromise());
         }
     }
